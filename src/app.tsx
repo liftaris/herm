@@ -442,7 +442,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
           return
         }
         case "goal": {
-          goalHook.cmd(arg)
+          goalHook.cmd(arg, sid)
             .then(r => {
               dispatch({ kind: "system", text: r.line })
               // CLI's _handle_goal_command kicks the loop off via

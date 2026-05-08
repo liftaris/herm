@@ -4,11 +4,11 @@
 // tui_gateway/server.py (the post-turn Ralph loop); this module is the
 // reactor, not the driver.
 //
-// Setting/controlling the goal goes through the slash-worker
-// (slash.exec → HermesCLI._handle_goal_command → GoalManager), NOT via
-// shell.exec + `python3 -c` — that pattern is on tools/approval.py's
-// DANGEROUS_PATTERNS list and tui_gateway's shell.exec handler hard-
-// rejects it with a 4005 before it ever runs.
+// Setting/controlling the goal goes through command.dispatch, NOT the
+// slash-worker. HermesCLI._handle_goal_command queues the kickoff prompt
+// onto an in-process _pending_input queue that a slash-worker subprocess
+// cannot read, so tui_gateway handles /goal directly and returns a typed
+// {type: "send", notice, message} payload.
 
 import type { DialogContext } from "../ui/dialog"
 import type { Gateway } from "./gateway"
@@ -18,22 +18,19 @@ import { io } from "../io"
 
 type Toast = { show: (o: { variant: "success"; title?: string; message: string; duration?: number }) => void }
 type ShellResult = { stdout: string; stderr: string; code: number }
-type SlashResult = { output?: string; warning?: string }
+type DispatchResult = { type?: string; output?: string; notice?: string; message?: string }
 
 export type GoalHook = {
   /** Called from onTurnComplete. Reads goal state, fires if done. */
   check: (sid: string) => void
-  /** Route /goal through the slash-worker. Returns cleaned output for
-   *  the transcript plus whether this was a fresh set (caller kicks
-   *  off the loop by sending the goal text as a prompt — parity with
-   *  the CLI's _pending_input.put(goal)). */
-  cmd: (arg: string) => Promise<{ line: string; kick: string | null }>
+  /** Route /goal through command.dispatch. Returns cleaned output for
+   *  the transcript plus an optional kickoff prompt from the gateway
+   *  ({type: "send", message}) when setting a fresh goal. */
+  cmd: (arg: string, sid?: string) => Promise<{ line: string; kick: string | null }>
 }
 
 const SECONDS = 10
 const SUSPEND = process.platform === "darwin" ? "pmset sleepnow" : "systemctl suspend"
-const VERBS = new Set(["status", "pause", "resume", "clear", "stop", "done"])
-
 // _handle_goal_command prints via _cprint with _DIM/_RST interpolated
 // into the string before the worker's lambda swap, so the ANSI bytes
 // are in the captured buffer. Strip them for the transcript.
@@ -74,17 +71,12 @@ export function makeGoalHook(gw: Gateway, dialog: DialogContext, toast: Toast): 
         act(s.goal)
       }).catch(() => {})
     },
-    cmd: async (arg: string) => {
+    cmd: async (arg: string, sid?: string) => {
       const trimmed = arg.trim()
-      const first = trimmed.split(/\s+/, 1)[0]?.toLowerCase() ?? ""
-      // Non-verb (and non-empty) first token ⇒ this is a fresh goal
-      // set; the caller should kick the loop off by submitting the
-      // goal text as the first prompt. Verbs + bare `/goal` just
-      // report/mutate state.
-      const kick = trimmed && !VERBS.has(first) ? trimmed : null
-      const r = await gw.request<SlashResult>("slash.exec",
-        { command: `/goal${trimmed ? " " + trimmed : ""}` })
-      const line = (r.output ?? "").replace(ANSI, "").trim() || "ok"
+      const r = await gw.request<DispatchResult>("command.dispatch",
+        { name: "goal", arg: trimmed, ...(sid ? { session_id: sid } : {}) })
+      const line = (r.notice ?? r.output ?? "").replace(ANSI, "").trim() || "ok"
+      const kick = r.type === "send" && r.message ? r.message : null
       return { line, kick }
     },
   }

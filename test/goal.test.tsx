@@ -77,13 +77,21 @@ describe("countdown dialog", () => {
   })
 })
 
-// ─── goalHook.cmd → slash.exec dispatch ──────────────────────────────
+// ─── goalHook.cmd → command.dispatch ─────────────────────────────────
 
 describe("goalHook.cmd", () => {
   const mk = () => {
-    const calls: string[] = []
+    const calls: Record<string, unknown>[] = []
     const gw = new MockGateway({
-      "slash.exec": (p) => { calls.push(String(p.command)); return { output: "  ⊙ Goal set (20-turn budget): x\n  \x1b[2mAfter each turn…\x1b[22m" } },
+      "command.dispatch": (p) => {
+        calls.push(p)
+        if (String(p.arg).startsWith("ship")) return {
+          type: "send",
+          notice: "  ⊙ Goal set (20-turn budget): x\n  \x1b[2mAfter each turn…\x1b[22m",
+          message: String(p.arg),
+        }
+        return { type: "exec", output: String(p.arg) ? `ok ${String(p.arg)}` : "No active goal" }
+      },
     })
     const dialog = { replace: () => {}, clear: () => {}, stack: [] as const, open: () => false }
     const toast = { show: () => {} }
@@ -91,28 +99,29 @@ describe("goalHook.cmd", () => {
     return { hook, calls }
   }
 
-  test("verbs pass through to /goal <verb>; no kick", async () => {
+  test("verbs pass through to command.dispatch; no kick", async () => {
     const { hook, calls } = mk()
     for (const v of ["status", "pause", "resume", "clear", "done"]) {
       const r = await hook.cmd(v)
       expect(r.kick).toBeNull()
     }
-    expect(calls).toEqual([
-      "/goal status", "/goal pause", "/goal resume", "/goal clear", "/goal done",
+    expect(calls.map(c => c.arg)).toEqual([
+      "status", "pause", "resume", "clear", "done",
     ])
+    expect(calls.every(c => c.name === "goal")).toBe(true)
   })
 
   test("bare /goal → status; no kick", async () => {
     const { hook, calls } = mk()
     const r = await hook.cmd("")
-    expect(calls[0]).toBe("/goal")
+    expect(calls[0]).toMatchObject({ name: "goal", arg: "" })
     expect(r.kick).toBeNull()
   })
 
   test("free text → set; kick = goal text; ANSI stripped from output", async () => {
     const { hook, calls } = mk()
     const r = await hook.cmd("ship the $(thing)")
-    expect(calls[0]).toBe("/goal ship the $(thing)")
+    expect(calls[0]).toMatchObject({ name: "goal", arg: "ship the $(thing)" })
     expect(r.kick).toBe("ship the $(thing)")
     // _DIM/_RST stripped; lines trimmed.
     expect(r.line).toContain("⊙ Goal set")
@@ -126,7 +135,7 @@ describe("goalHook.cmd", () => {
   test("never dispatches shell.exec", async () => {
     let touched = false
     const gw = new MockGateway({
-      "slash.exec": () => ({ output: "ok" }),
+      "command.dispatch": () => ({ type: "exec", output: "ok" }),
       "shell.exec": () => { touched = true; return { stdout: "", stderr: "", code: 0 } },
     })
     const hook = makeGoalHook(gw,
