@@ -3,7 +3,7 @@ import { parseLaunch, type Launch } from "../src/app/launch"
 import { openStateDb } from "./fixtures/state-db"
 import { resetDb, lastReal, byId } from "../src/utils/sessions-db"
 import * as preferences from "../src/utils/preferences"
-import { useSession } from "../src/app/useSession"
+import { useSession, normalizeSessionId } from "../src/app/useSession"
 import { MockGateway, mountNode } from "./harness"
 
 // ─── argv parse ──────────────────────────────────────────────────────
@@ -23,6 +23,14 @@ describe("parseLaunch", () => {
   for (const [argv, want] of cases) {
     test(JSON.stringify(argv), () => expect(parseLaunch(argv)).toEqual(want))
   }
+})
+
+describe("normalizeSessionId", () => {
+  test("accepts db ids and session json filenames", () => {
+    expect(normalizeSessionId("20260509_002407_e8b6e4")).toBe("20260509_002407_e8b6e4")
+    expect(normalizeSessionId(" session_20260509_002407_e8b6e4.json ")).toBe("20260509_002407_e8b6e4")
+    expect(normalizeSessionId("session_not-a-date.json")).toBe("session_not-a-date")
+  })
 })
 
 // ─── sessions-db helpers ─────────────────────────────────────────────
@@ -99,11 +107,14 @@ describe("useSession.boot", () => {
     expect(gw.last("session.resume")?.params.session_id).toBe("stub")
   })
 
-  test("mode:new creates when lastSessionId is non-empty session", async () => {
+  test("mode:new resumes when lastSessionId points to a non-empty session (fixes herm -c)", async () => {
+    // Previously, non-empty lastSessionId fell through to fresh() — the stored
+    // session was silently abandoned. Now we resume it so no work is lost.
     preferences.set("lastSessionId", "real")
     const gw = new MockGateway()
     const r = await boot(gw, { mode: "new" })
-    expect(gw.calls.some(c => c.method === "session.create")).toBe(true)
+    expect(gw.calls.some(c => c.method === "session.create")).toBe(false)
+    expect(gw.last("session.resume")?.params.session_id).toBe("real")
     expect(r.messages).toEqual([])
   })
 
@@ -111,6 +122,12 @@ describe("useSession.boot", () => {
     const gw = new MockGateway()
     await boot(gw, { mode: "resume" })
     expect(gw.last("session.resume")?.params.session_id).toBe("real")
+  })
+
+  test("mode:resume normalizes session_*.json filenames", async () => {
+    const gw = new MockGateway()
+    await boot(gw, { mode: "resume", sid: "session_20260509_002407_e8b6e4.json" })
+    expect(gw.last("session.resume")?.params.session_id).toBe("20260509_002407_e8b6e4")
   })
 
   test("mode:resume sid rejection falls through to fresh + note", async () => {

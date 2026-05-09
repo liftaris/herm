@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterAll } from "bun:test"
 import { openStateDb } from "./fixtures/state-db"
 import { searchSessions, queryRecentSessions, querySubagents, queryLineage } from "../src/utils/hermes-home"
-import { kind, resetDb, peek } from "../src/utils/sessions-db"
+import { kind, resetDb, peek, lastReal, resolveChainTip } from "../src/utils/sessions-db"
 
 // Seeds a clean state.db and exercises the real SQL paths in
 // sessions-db.ts via the hermes-home re-exports.
@@ -353,6 +353,173 @@ describe("kind() — pure classifier (single source of truth for parent→child 
   })
   test("parent ended normally, child after → subagent (degenerate: orphaned child)", () => {
     expect(kind({ ended_at: 100, end_reason: "exit" }, { started_at: 200 })).toBe("subagent")
+  })
+})
+
+describe("lastReal() — compression chain walk", () => {
+  afterAll(wipe)
+
+  test("returns root TUI session when it has messages (no compression)", () => {
+    const db = seed()
+    // Root started first, still has messages
+    sess(db, "r1", "tui", 1700000000, {
+      ended_at: 1700000100, end_reason: "exit", message_count: 3,
+    })
+    db.close()
+    resetDb()
+
+    const result = lastReal()
+    expect(result?.id).toBe("r1")
+    expect(result?.message_count).toBe(3)
+  })
+
+  test("skips root and returns continuation when root has no messages", () => {
+    const db = seed()
+    // Root compressed at 2000 with no remaining messages
+    sess(db, "root", "tui", 1700000000, {
+      ended_at: 2000, end_reason: "compression", message_count: 0,
+    })
+    // Continuation started after root ended, has messages
+    sess(db, "cont", "tui", 2100, {
+      ended_at: null, end_reason: null, message_count: 5,
+      parent_session_id: "root",
+    })
+    db.close()
+    resetDb()
+
+    // lastReal must walk the chain and return the continuation tip
+    const result = lastReal()
+    expect(result?.id).toBe("cont")
+    expect(result?.message_count).toBe(5)
+  })
+
+  test("returns multi-link chain tip (root → cont1 → cont2)", () => {
+    const db = seed()
+    sess(db, "A", "tui", 1000, {
+      ended_at: 2000, end_reason: "compression", message_count: 0,
+    })
+    sess(db, "B", "tui", 2100, {
+      ended_at: 3000, end_reason: "compression", message_count: 0,
+      parent_session_id: "A",
+    })
+    sess(db, "C", "tui", 3100, {
+      ended_at: null, end_reason: null, message_count: 4,
+      parent_session_id: "B",
+    })
+    db.close()
+    resetDb()
+
+    // Must walk two links: root→cont1→cont2 and return C
+    const result = lastReal()
+    expect(result?.id).toBe("C")
+    expect(result?.message_count).toBe(4)
+  })
+
+  test("returns CLI session when no TUI sessions exist (CLI sessions are valid for herm -c)", () => {
+    const db = seed()
+    sess(db, "cli-sess", "cli", 1700000000, {
+      ended_at: 1700000100, end_reason: "exit", message_count: 1,
+    })
+    db.close()
+    resetDb()
+
+    // lastReal() now searches IN('tui', 'cli') so CLI sessions are found.
+    // This is correct: herm -c should resume the last session regardless of source.
+    expect(lastReal()?.id).toBe("cli-sess")
+  })
+
+  test("returns undefined when only root has messages but no continuations", () => {
+    const db = seed()
+    sess(db, "solo", "tui", 1700000000, {
+      ended_at: null, end_reason: null, message_count: 2,
+    })
+    db.close()
+    resetDb()
+
+    // No chain to walk; root itself is returned
+    const result = lastReal()
+    expect(result?.id).toBe("solo")
+  })
+})
+
+describe("resolveChainTip() — returns tip regardless of message_count", () => {
+  // Unlike lastReal(), resolveChainTip does NOT filter by message_count.
+  // It is used by useSession boot() to resolve the stored lastSessionId
+  // before checking whether its tip is a reusable 0-msg stub.
+  afterAll(wipe)
+
+  test("returns same id when passed a standalone root", () => {
+    const db = seed()
+    sess(db, "solo", "tui", 1700000000)
+    db.close()
+    resetDb()
+
+    expect(resolveChainTip("solo")).toBe("solo")
+  })
+
+  test("returns continuation when passed a compressed root", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1000, {
+      ended_at: 2000, end_reason: "compression", message_count: 0,
+    })
+    sess(db, "cont", "tui", 2100, {
+      parent_session_id: "root", message_count: 5,
+    })
+    db.close()
+    resetDb()
+
+    expect(resolveChainTip("root")).toBe("cont")
+  })
+
+  test("walks multi-link chain and returns live tip", () => {
+    const db = seed()
+    sess(db, "A", "tui", 1000, {
+      ended_at: 2000, end_reason: "compression", message_count: 0,
+    })
+    sess(db, "B", "tui", 2100, {
+      ended_at: 3000, end_reason: "compression", message_count: 0,
+      parent_session_id: "A",
+    })
+    sess(db, "C", "tui", 3100, {
+      parent_session_id: "B", message_count: 8,
+    })
+    db.close()
+    resetDb()
+
+    // Pass the root → should walk to tip C
+    expect(resolveChainTip("A")).toBe("C")
+    // Pass the middle → should walk to C
+    expect(resolveChainTip("B")).toBe("C")
+    // Pass the tip → should return itself
+    expect(resolveChainTip("C")).toBe("C")
+  })
+
+  test("stub-reuse scenario: stored lastSessionId points to ended continuation with 296 msgs", () => {
+    // Simulates: user stored "lastSessionId" = parent continuation id (296 msgs).
+    // boot() calls resolveChainTip(storedId) → walks to stub → stub has 0 msgs.
+    // The 0-msg stub should be resumed, not skipped.
+    const db = seed()
+    // Root ended at compression
+    sess(db, "root", "tui", 1700000000, {
+      ended_at: 1700001000, end_reason: "compression", message_count: 0,
+    })
+    // Parent continuation ended (the one stored in lastSessionId)
+    sess(db, "parent-cont", "tui", 1700001100, {
+      ended_at: 1700002000, end_reason: "compression", message_count: 296,
+      parent_session_id: "root",
+    })
+    // Live stub (0 msgs) — this is what boot() should find
+    sess(db, "stub", "tui", 1700002100, {
+      parent_session_id: "parent-cont", message_count: 0,
+    })
+    db.close()
+    resetDb()
+
+    // resolveChainTip(parent-cont) must walk to stub, not return parent-cont
+    expect(resolveChainTip("parent-cont")).toBe("stub")
+    // stub has 0 msgs → correct candidate for resume
+    const stubRow = resolveChainTip("parent-cont")
+    expect(stubRow).toBe("stub")
   })
 })
 

@@ -246,10 +246,53 @@ export const byId = (id: string): SessionRow | null => {
   return r ? toRow(r) : null
 }
 
-/** Newest root TUI session that actually has messages. Target of `-c`
- *  and source of the splash continue-prompt title. */
-export const lastReal = (): SessionRow | undefined =>
-  roots().find(r => r.message_count > 0 && r.sessionSource === "tui")
+/** Newest TUI/CLI session that actually has messages, projected to its
+ *  compression-chain tip. Target of `herm -c` and source of the splash
+ *  continue-prompt title.
+ *
+ *  Rationale: pre-fix this was `roots().find(r => r.message_count > 0
+ *  && r.sessionSource === "tui")`. That misses two real-world cases:
+ *  (1) the newest *messages* live on a continuation child, not the
+ *  root; and (2) `-c` should resume the last session regardless of
+ *  whether you opened it in herm or via the bare `hermes` CLI. We now
+ *  pick the newest TUI/CLI session with messages, walk back to its
+ *  root, then forward to the live tip via `tip()`. */
+export const lastReal = (): SessionRow | undefined => {
+  const newest = q(
+    `SELECT s.id FROM sessions s
+     WHERE s.source IN ('tui', 'cli') AND s.message_count > 0
+     ORDER BY s.started_at DESC LIMIT 1`,
+  )?.get() as { id: string } | undefined
+  if (!newest) return undefined
+  const row = byId(resolveChainTip(newest.id))
+  // Tip might be a 0-msg stub (a freshly resumed session that hasn't
+  // received its first message yet). For `-c`/splash we require
+  // messages so the prompt has something to title.
+  return row?.message_count && row.message_count > 0 ? row : undefined
+}
+
+/** Resolve a session id to its chain tip, walking parent links to the
+ *  root then `tip()` forward. Unlike `lastReal()` this does NOT filter
+ *  by `message_count` — it returns the actual live end of the chain
+ *  even when the tip is a 0-msg stub. Used by `useSession.boot` so a
+ *  stored `lastSessionId` that points mid-chain still resolves to the
+ *  resumable end. */
+export const resolveChainTip = (sid: string): string => tip(walkUp(sid))
+
+/** Walk up parent_session_id links to the root (parent IS NULL).
+ *  Returns the input id when it is already a root. Bounded at 100
+ *  hops to defuse pathological cycles, mirroring `tip()`. */
+function walkUp(sid: string): string {
+  let cur = sid
+  for (let i = 0; i < 100; i++) {
+    const parent = q(
+      `SELECT parent_session_id FROM sessions WHERE id = ?`,
+    )?.get(cur) as { parent_session_id: string | null } | undefined
+    if (!parent || parent.parent_session_id === null) return cur
+    cur = parent.parent_session_id
+  }
+  return cur
+}
 
 // ─── Readers ─────────────────────────────────────────────────────────
 
