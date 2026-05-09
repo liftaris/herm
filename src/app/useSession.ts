@@ -27,6 +27,9 @@ export type CompressResult = {
 
 type Booted = { id: string; messages: Message[]; note?: string }
 
+export const normalizeSessionId = (input: string): string =>
+  input.trim().replace(/\.json$/i, "").replace(/^session_(?=\d{8}_)/, "")
+
 type SessionOps = {
   /** Establish the initial session per launch intent. */
   boot: (launch: Launch) => Promise<Booted>
@@ -42,10 +45,12 @@ export function useSession(): SessionOps {
   const gw = useGateway()
 
   const resume = useCallback(async (sid: string) => {
-    const res = await gw.request<SessionResumeResponse>("session.resume", { session_id: sid })
+    const raw = normalizeSessionId(sid)
+    const target = sdb.byId(raw) ? sdb.resolveChainTip(raw) : raw
+    const res = await gw.request<SessionResumeResponse>("session.resume", { session_id: target })
     const id = res.session_id
     gw.setSession(id)
-    preferences.set("lastSessionId", res.resumed ?? sid)
+    preferences.set("lastSessionId", res.resumed ?? target)
     const messages = res.messages?.length ? transcriptToMessages(res.messages) : []
     return { id, messages }
   }, [gw])
@@ -58,9 +63,18 @@ export function useSession(): SessionOps {
 
   const boot = useCallback(async (launch: Launch): Promise<Booted> => {
     const fresh = async (note?: string) => ({ id: await create(), messages: [], note })
+    const latest = async (note = "no prior session to resume — starting fresh") => {
+      const row = sdb.lastReal()
+      if (!row) return fresh(note)
+      try { return await resume(row.id) }
+      catch (e) {
+        const reason = e instanceof Error ? e.message : String(e)
+        return fresh(`resume ${row.id} failed: ${reason} — starting fresh`)
+      }
+    }
 
     if (launch.mode === "resume") {
-      const target = launch.sid ?? sdb.lastReal()?.id
+      const target = launch.sid ? normalizeSessionId(launch.sid) : sdb.lastReal()?.id
       if (!target) return fresh("no prior session to resume — starting fresh")
       try { return await resume(target) }
       catch (e) {
@@ -83,14 +97,14 @@ export function useSession(): SessionOps {
     const tip = last ? sdb.resolveChainTip(last) : null
     if (tip) {
       const tipRow = sdb.byId(tip)
-      if (!tipRow) return resume(sdb.lastReal()?.id)
+      if (!tipRow) return latest()
       if (tipRow.message_count === 0) {
         try { return await resume(tip) } catch { /* fall through */ }
-      } else {
-        return resume(tip)
+        return latest("resume empty stub failed — starting fresh")
       }
+      return resume(tip)
     }
-    return resume(sdb.lastReal()?.id)
+    return latest()
   }, [create, resume])
 
   const interrupt = useCallback(async () => {

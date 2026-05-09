@@ -539,12 +539,19 @@ export const Sessions = memo((props: Props) => {
     void fillKids(diskRows)
 
     // Stock session.list doesn't drop 0-msg stubs — every abandoned
-    // connect leaves one, and they're never useful to resume.
+    // connect leaves one, and they're never useful to resume. Keep
+    // local state.db rows as authoritative for herm: gateway rows can
+    // be stale, over-filtered, or ordered differently, but they are
+    // still useful when herm is pointed at a remote/mismatched state.
     const r = await rpc
     if (r.ok && r.v.sessions?.length) {
-      const merged = r.v.sessions
-        .filter(s => (s.message_count ?? 0) > 0)
-        .map(s => ({ ...s, detail: local.get(s.id) }))
+      const seen = new Set(diskRows.map(s => s.id))
+      const merged = [...diskRows]
+      for (const s of r.v.sessions.filter(s => (s.message_count ?? 0) > 0)) {
+        if (seen.has(s.id)) continue
+        seen.add(s.id)
+        merged.push({ ...s, detail: local.get(s.id) })
+      }
       setRows(merged)
       if (cached) last.rows = merged
       void fillKids(merged)
