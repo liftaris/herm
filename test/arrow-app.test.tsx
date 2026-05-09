@@ -27,7 +27,6 @@ describe("full App: up/down arrow → command history", () => {
     // Check the composer input row for "beta"
     const rows = t.frame().split("\n")
     const inputRow = rows.find(l => l.trim().startsWith(">") && l.includes("beta"))
-    console.log("After UP, input row:", inputRow ?? "(not found)")
     expect(inputRow).toBeDefined()
     
     // ── Press UP again: should recall "alpha" ───────────────────────
@@ -35,7 +34,6 @@ describe("full App: up/down arrow → command history", () => {
     await t.settle()
     const rows2 = t.frame().split("\n")
     const inputRow2 = rows2.find(l => l.trim().startsWith(">") && l.includes("alpha"))
-    console.log("After 2nd UP, input row:", inputRow2 ?? "(not found)")
     expect(inputRow2).toBeDefined()
     
     t.destroy()
