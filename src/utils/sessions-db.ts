@@ -247,9 +247,52 @@ export const byId = (id: string): SessionRow | null => {
 }
 
 /** Newest root TUI session that actually has messages. Target of `-c`
- *  and source of the splash continue-prompt title. */
-export const lastReal = (): SessionRow | undefined =>
-  roots().find(r => r.message_count > 0 && r.sessionSource === "tui")
+ *  and source of the splash continue-prompt title.
+ *
+ * Strategy: find the newest TUI session with messages (could be a root OR
+ * a continuation), then walk backward to the root and forward to the tip.
+ * This handles compression chains where messages live in the continuation,
+ * not the root. */
+export const lastReal = (): SessionRow | undefined => {
+  // Find the newest TUI session with messages — root or continuation.
+  const newestStmt = q(`
+    SELECT s.id FROM sessions s
+    WHERE s.source = 'tui' AND s.message_count > 0
+    ORDER BY s.started_at DESC
+    LIMIT 1
+  `)
+  const newest = newestStmt?.get() as { id: string } | undefined
+  if (!newest) return undefined
+
+  // Walk backward: if newest is a continuation, walk up to the root.
+  const rootId = walkUp(newest.id)
+  // Walk forward: the root may itself be the tip of a compression chain.
+  const tipId = resolveChainTip(rootId)
+  const row = byId(tipId)
+  // Guard: require messages (tip might be a 0-msg stub).
+  return row?.message_count && row.message_count > 0 ? row : undefined
+}
+
+/** Resolve a session id to its chain tip (following compression continuations).
+ *  Unlike lastReal(), this does NOT filter by message_count — it returns the
+ *  actual live end of the chain regardless of whether it has messages.
+ *  Used by useSession boot() to resolve the stored lastSessionId before
+ *  checking whether its tip is a reusable 0-msg stub. */
+export const resolveChainTip = (sid: string): string =>
+  tip(walkUp(sid))
+
+/** Walk up a compression chain to the root (parent_session_id IS NULL).
+ * Returns the id passed in if it is already a root. */
+function walkUp(sid: string): string {
+  let cur = sid
+  for (let i = 0; i < 100; i++) {
+    const parentStmt = q(`SELECT parent_session_id FROM sessions WHERE id = ?`)
+    const parent = parentStmt?.get(cur) as { parent_session_id: string | null } | undefined
+    if (!parent || parent.parent_session_id === null) return cur
+    cur = parent.parent_session_id
+  }
+  return cur // cap hit — return what we have
+}
 
 // ─── Readers ─────────────────────────────────────────────────────────
 

@@ -63,14 +63,23 @@ export function useSession(): SessionOps {
       const target = launch.sid ?? sdb.lastReal()?.id
       if (!target) return fresh("no prior session to resume — starting fresh")
       try { return await resume(target) }
-      catch { return fresh(`resume ${target} failed — starting fresh`) }
+      catch (e) {
+        const reason = e instanceof Error ? e.message : String(e)
+        return fresh(`resume ${target} failed: ${reason} — starting fresh`)
+      }
     }
 
     // mode:"new" — reuse our own abandoned empty stub instead of
     // creating another row every launch.
+    // Resolve the stored lastSessionId through any compression chain, then
+    // check whether its tip is a reusable stub. Without this, a stored parent
+    // id (e.g. an ended continuation with 296 messages) bypasses the check,
+    // the stub-reuse path is skipped, and a fresh stub is created instead of
+    // resuming the live tip — silently losing access to the active session.
     const last = preferences.get("lastSessionId")
-    if (last && sdb.byId(last)?.message_count === 0) {
-      try { return await resume(last) } catch { /* fall through */ }
+    const tip = last ? sdb.resolveChainTip(last) : null
+    if (tip && sdb.byId(tip)?.message_count === 0) {
+      try { return await resume(tip) } catch { /* fall through */ }
     }
     return fresh()
   }, [create, resume])
