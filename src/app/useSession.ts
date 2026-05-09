@@ -63,7 +63,10 @@ export function useSession(): SessionOps {
       const target = launch.sid ?? sdb.lastReal()?.id
       if (!target) return fresh("no prior session to resume — starting fresh")
       try { return await resume(target) }
-      catch { return fresh(`resume ${target} failed — starting fresh`) }
+      catch (e) {
+        const reason = e instanceof Error ? e.message : String(e)
+        return fresh(`resume ${target} failed: ${reason} — starting fresh`)
+      }
     }
 
     // mode:"new" — reuse our own abandoned empty stub instead of
