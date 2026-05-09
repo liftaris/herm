@@ -254,10 +254,11 @@ export const byId = (id: string): SessionRow | null => {
  * This handles compression chains where messages live in the continuation,
  * not the root. */
 export const lastReal = (): SessionRow | undefined => {
-  // Find the newest TUI session with messages — root or continuation.
+  // Find the newest session with messages — includes both TUI and CLI sessions.
+  // herm -c should resume the last session regardless of interface used.
   const newestStmt = q(`
     SELECT s.id FROM sessions s
-    WHERE s.source = 'tui' AND s.message_count > 0
+    WHERE s.source IN ('tui', 'cli') AND s.message_count > 0
     ORDER BY s.started_at DESC
     LIMIT 1
   `)

@@ -99,11 +99,14 @@ describe("useSession.boot", () => {
     expect(gw.last("session.resume")?.params.session_id).toBe("stub")
   })
 
-  test("mode:new creates when lastSessionId is non-empty session", async () => {
+  test("mode:new resumes when lastSessionId points to a non-empty session (fixes herm -c)", async () => {
+    // Previously, non-empty lastSessionId fell through to fresh() — the stored
+    // session was silently abandoned. Now we resume it so no work is lost.
     preferences.set("lastSessionId", "real")
     const gw = new MockGateway()
     const r = await boot(gw, { mode: "new" })
-    expect(gw.calls.some(c => c.method === "session.create")).toBe(true)
+    expect(gw.calls.some(c => c.method === "session.create")).toBe(false)
+    expect(gw.last("session.resume")?.params.session_id).toBe("real")
     expect(r.messages).toEqual([])
   })
 

@@ -415,7 +415,7 @@ describe("lastReal() — compression chain walk", () => {
     expect(result?.message_count).toBe(4)
   })
 
-  test("returns undefined when no TUI sessions exist", () => {
+  test("returns CLI session when no TUI sessions exist (CLI sessions are valid for herm -c)", () => {
     const db = seed()
     sess(db, "cli-sess", "cli", 1700000000, {
       ended_at: 1700000100, end_reason: "exit", message_count: 1,
@@ -423,7 +423,9 @@ describe("lastReal() — compression chain walk", () => {
     db.close()
     resetDb()
 
-    expect(lastReal()).toBeUndefined()
+    // lastReal() now searches IN('tui', 'cli') so CLI sessions are found.
+    // This is correct: herm -c should resume the last session regardless of source.
+    expect(lastReal()?.id).toBe("cli-sess")
   })
 
   test("returns undefined when only root has messages but no continuations", () => {
