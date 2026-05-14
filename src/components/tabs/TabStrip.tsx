@@ -11,12 +11,14 @@ type Props = {
   active: number
   onChange: (i: number) => void
   hint?: string
+  menu?: boolean
 }
 
-export const TabStrip = memo(({ tabs, active, onChange, hint }: Props) => {
+export const TabStrip = memo(({ tabs, active, onChange, hint, menu }: Props) => {
   const theme = useTheme().theme
   return (
-    <box width="100%" flexDirection="row" height={1} overflow="hidden">
+    <box width="100%" flexDirection="row" height={1} overflow="hidden"
+         backgroundColor={menu ? theme.backgroundMenu : undefined}>
       {tabs.map((name, i) => (
         <box
           key={i}

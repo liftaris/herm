@@ -26,6 +26,7 @@ export const TabBar = memo(({ tabs, activeTab, onTabChange }: Props) => {
       active={activeTab}
       onChange={onTabChange}
       hint={hint}
+      menu
     />
   )
 })

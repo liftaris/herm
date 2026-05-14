@@ -20,6 +20,7 @@ import { resolveTheme } from "./resolve"
 import { DEFAULT_THEME, THEME_NAMES } from "./builtin"
 import { load, get } from "./load"
 import { syntax } from "./syntax"
+import { userThemes } from "./user"
 import * as preferences from "../context/preferences"
 
 interface ThemeContext {
@@ -63,7 +64,10 @@ export const ThemeProvider = ({
   // boot and the pref drives thereafter.
   const pref = preferences.usePref("theme")
   const modePref = preferences.usePref("themeMode")
-  const active = pref ?? initial ?? DEFAULT_THEME
+  const users = useMemo(() => userThemes(), [pref])
+  const names = useMemo(() => [...new Set([...THEME_NAMES, ...Object.keys(users)])].sort(), [users])
+  const hasName = useCallback((name: string) => THEMES_SET.has(name) || users[name] !== undefined, [users])
+  const active = pref && hasName(pref) ? pref : initial && hasName(initial) ? initial : DEFAULT_THEME
   const mode = modePref === "light" || modePref === "dark" ? modePref : initialMode
   const [tick, force] = useState(0)
 
@@ -74,17 +78,17 @@ export const ThemeProvider = ({
   // handles any theme whose body isn't cached yet (e.g. one frame of
   // lag during picker preview).
   useEffect(() => {
-    if (get(active) && get(DEFAULT_THEME)) return
+    if ((users[active] || get(active)) && get(DEFAULT_THEME)) return
     let cancelled = false
-    const need = [active, DEFAULT_THEME].filter(n => !get(n))
+    const need = [active, DEFAULT_THEME].filter(n => !users[n] && !get(n) && THEMES_SET.has(n))
     Promise.all(need.map(n => load(n).catch(() => undefined))).then(() => {
       if (!cancelled) force(n => n + 1)
     })
     return () => { cancelled = true }
-  }, [active])
+  }, [active, users])
 
   const resolved = useMemo(() => {
-    const json = get(active) ?? get(DEFAULT_THEME)
+    const json = users[active] ?? get(active) ?? get(DEFAULT_THEME)
     if (!json) return null
     try {
       return resolveTheme(json, mode)
@@ -93,20 +97,20 @@ export const ThemeProvider = ({
       return fallback ? resolveTheme(fallback, mode) : null
     }
     // tick included so the memo recomputes after a lazy load resolves.
-  }, [active, mode, tick])
+  }, [active, mode, tick, users])
 
   const set = useCallback((name: string) => {
-    if (!THEMES_SET.has(name)) return false
+    if (!hasName(name)) return false
     preferences.set("theme", name)
-    if (!get(name)) load(name).catch(() => {})
+    if (THEMES_SET.has(name) && !get(name)) load(name).catch(() => {})
     return true
-  }, [])
+  }, [hasName])
 
   const setMode = useCallback((mode: "dark" | "light") => {
     preferences.set("themeMode", mode)
   }, [])
 
-  const has = useCallback((name: string) => THEMES_SET.has(name), [])
+  const has = hasName
 
   const syntaxStyle = useMemo(
     () => (resolved ? syntax(resolved) : null),
@@ -122,10 +126,10 @@ export const ThemeProvider = ({
       mode,
       set,
       setMode,
-      names: THEME_NAMES,
+      names,
       has,
     }
-  }, [resolved, syntaxStyle, active, mode, set, setMode, has])
+  }, [resolved, syntaxStyle, active, mode, set, setMode, names, has])
 
   if (!value) return null
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

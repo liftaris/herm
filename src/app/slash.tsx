@@ -28,7 +28,7 @@ import { openRollback } from "../dialogs/rollback"
 import { openHistory } from "../dialogs/history"
 import { openStatus, openUsage, openProfile } from "../dialogs/info"
 import { openChafa } from "../dialogs/chafa"
-import { SKINS, type SkinState } from "../context/skin"
+import { skins, mode as skinMode, type SkinState } from "../context/skin"
 import { copy as clipCopy } from "../utils/clipboard"
 import * as preferences from "../context/preferences"
 import { redraw } from "./useAppKeys"
@@ -199,14 +199,18 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             () => { void x.newSession() })
           return
         case "theme": {
-          const mode = arg.trim().toLowerCase()
-          if (!mode) { openThemePicker(dialog, themeCtx); return }
-          if (mode === "light" || mode === "dark") {
-            themeCtx.setMode(mode)
-            x.dispatch({ kind: "system", text: `theme mode → ${mode}` })
+          const name = arg.trim()
+          if (!name) { openThemePicker(dialog, themeCtx); return }
+          if (name === "dark" || name === "light") {
+            themeCtx.setMode(name)
+            x.dispatch({ kind: "system", text: `theme mode → ${name}` })
             return
           }
-          toast.show({ variant: "error", message: "usage: /theme [light|dark]" })
+          if (!themeCtx.set(name)) {
+            toast.show({ variant: "error", message: `unknown theme: ${name}` })
+            return
+          }
+          x.dispatch({ kind: "system", text: `theme → ${name}` })
           return
         }
         case "help": dialog.replace(<HelpDialog />); return
@@ -229,12 +233,13 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
         case "splash": x.summoned.current = true; x.setSplash(true); return
         case "skin": {
           const name = arg.trim()
+          const list = skins()
           if (!name) {
             x.dispatch({ kind: "system",
-              text: `skin: ${x.skin.skin?.name ?? "—"}\n  ${SKINS.join("  ")}` })
+              text: `skin: ${x.skin.skin?.name ?? "—"}\n  ${list.join("  ")}` })
             return
           }
-          if (!(SKINS as readonly string[]).includes(name)) {
+          if (!list.includes(name)) {
             toast.show({ variant: "error", message: `unknown skin: ${name}` })
             return
           }
@@ -246,8 +251,13 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             { key: "skin", value: name })
             .then(r => {
               if (r.warning) toast.show({ variant: "warning", message: r.warning })
-              if (themeCtx.has(name)) themeCtx.set(name)
+              if (themeCtx.has(name)) {
+                themeCtx.set(name)
+                const m = skinMode(name)
+                if (m) themeCtx.setMode(m)
+              }
               preferences.set("eikon", undefined)
+              preferences.set("eikonPath", undefined)
               x.dispatch({ kind: "system", text: `skin → ${name}` })
             })
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
