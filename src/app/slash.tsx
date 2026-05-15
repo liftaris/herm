@@ -290,7 +290,22 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             })
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
-        case "quit": quit(renderer, x.sid, x.title, gw); return
+        case "quit": {
+          const msgs = x.turnRef.current.messages
+          const toolCount = msgs.reduce(
+            (n, m) => n + m.parts.filter(p => p.type === "tool").length, 0)
+          const inputTok = msgs.reduce((n, m) => n + (m.usage?.input ?? 0), 0)
+          const outputTok = msgs.reduce((n, m) => n + (m.usage?.output ?? 0), 0)
+          quit(renderer, x.sid, x.title, gw, {
+            start: Date.now(),
+            msgs: msgs.length,
+            tools: toolCount,
+            inputTok,
+            outputTok,
+            skin: x.skin.skin,
+            model: x.info?.model,
+          }); return
+        }
         case "queue":
           if (!arg) { x.dispatch({ kind: "system", text: `${x.queueRef.current.length} queued` }); return }
           x.setQueue(q => [...q, arg]); return

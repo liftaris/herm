@@ -35,3 +35,20 @@ export const SkinProvider = memo(({ value, children }: { value: SkinState; child
 export function useSkin(): SkinState {
   return useContext(Ctx)
 }
+
+/** Skin-theme aware farewell message, keyed by built-in skin name. */
+export function goodbye(skin?: GatewaySkin | null): string {
+  const map: Record<string, string> = {
+    default: "Goodbye! ⚕",
+    ares: "Farewell, warrior! ⚔",
+    mono: "Logging off. ⎇",
+    slate: "Slate cleared. ☐",
+    daylight: "See you in the light. ☀",
+    "warm-lightmode": "Till next time. ✦",
+    poseidon: "The tide recedes. ~",
+    sisyphus: "The boulder rests. ⊙",
+    charizard: "Flame out! ✦",
+  }
+  const name = skin?.name ?? "default"
+  return map[name] ?? "Goodbye!"
+}

@@ -579,7 +579,19 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     // the head once turn.streaming flips false.
     queued: queue.length,
     onFlushQueue: stream.doInterrupt,
-    onQuit: () => quit(renderer, sid, title, gw),
+    onQuit: () => {
+      const toolCount = turn.messages.reduce(
+        (n, m) => n + m.parts.filter(p => p.type === "tool").length, 0)
+      quit(renderer, sid, title, gw, {
+        start: sessionStart.current,
+        msgs: turn.messages.length,
+        tools: toolCount,
+        inputTok: usage?.input,
+        outputTok: usage?.output,
+        skin: skin.skin,
+        model: info?.model,
+      })
+    },
     onQuitArm: (label) =>
       toast.show({ variant: "info", message: `${label} again to quit` }),
     onInterruptNotice: () => {
