@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { join, resolve } from "path"
 import { tmpdir } from "os"
-import { python } from "../src/context/gateway-client"
+import { hermesAgentRoot, python } from "../src/context/gateway-client"
 
 const withEnv = <T>(key: string, value: string | undefined, fn: () => T): T => {
   const prev = process.env[key]
@@ -16,6 +16,34 @@ const withEnv = <T>(key: string, value: string | undefined, fn: () => T): T => {
 }
 
 const tmp = () => mkdtempSync(join(tmpdir(), "herm-gateway-"))
+
+describe("hermesAgentRoot", () => {
+  test("uses HERMES_AGENT_ROOT when set", () => {
+    withEnv("HERMES_AGENT_ROOT", resolve("custom", "agent"), () => {
+      withEnv("HERMES_HOME", resolve("custom", "home"), () => {
+        expect(hermesAgentRoot()).toBe(resolve("custom", "agent"))
+      })
+    })
+  })
+
+  test("falls back to HERMES_HOME/hermes-agent", () => {
+    withEnv("HERMES_AGENT_ROOT", undefined, () => {
+      withEnv("HERMES_HOME", resolve("custom", "home"), () => {
+        expect(hermesAgentRoot()).toBe(resolve("custom", "home", "hermes-agent"))
+      })
+    })
+  })
+
+  test("falls back to HOME/.hermes/hermes-agent", () => {
+    withEnv("HERMES_AGENT_ROOT", undefined, () => {
+      withEnv("HERMES_HOME", undefined, () => {
+        withEnv("HOME", resolve("custom", "user"), () => {
+          expect(hermesAgentRoot()).toBe(resolve("custom", "user", ".hermes", "hermes-agent"))
+        })
+      })
+    })
+  })
+})
 
 describe("python", () => {
   test("uses HERMES_PYTHON when set", () => {
