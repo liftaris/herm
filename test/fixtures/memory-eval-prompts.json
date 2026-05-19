@@ -1,0 +1,67 @@
+[
+  {
+    "id": "memory-architecture-baseline",
+    "category": "memory architecture decisions",
+    "prompt": "What memory architecture should Hermes use for Cody?",
+    "expectIntent": "pattern",
+    "minInjects": 1,
+    "mustQuery": ["memory", "architecture", "Hermes"],
+    "mustInject": ["Hermes router", "agentmemory"]
+  },
+  {
+    "id": "obsidian-authority-over-semantic",
+    "category": "Obsidian authority vs semantic hints",
+    "prompt": "What is true now in the memory config file?",
+    "expectIntent": "truth",
+    "expectSourcePrefix": ["repo", "obsidian"],
+    "mustInject": ["Obsidian is authority"]
+  },
+  {
+    "id": "closeout-behavior",
+    "category": "closeout behavior",
+    "prompt": "How should Cody handle session closeouts?",
+    "expectIntent": "pattern",
+    "minInjects": 1,
+    "mustInject": ["closeouts update memory"]
+  },
+  {
+    "id": "riley-paperclip-routing",
+    "category": "Riley/Paperclip/Hermes routing",
+    "prompt": "Who should own Rally operations versus Cody system routing?",
+    "expectIntent": "pattern",
+    "minInjects": 1,
+    "mustInject": ["Paperclip", "Hermes owns routing"]
+  },
+  {
+    "id": "stale-truncated-trap",
+    "category": "stale/truncated memory traps",
+    "prompt": "Why is iMessage recall slow?\n\n<memory-context>\n- Price flags ~5 minute iMessage response times as too slow; for simple lookups, p:\n- Protocol: Price-provided blocks are authoritative reference c:\n</memory-context>",
+    "expectIntent": "pattern",
+    "mustQuery": ["Why", "iMessage", "recall", "slow"],
+    "forbidQuery": ["Protocol", "authoritative", "reference"],
+    "expectDegraded": true
+  },
+  {
+    "id": "imessage-fast-lookup",
+    "category": "iMessage/simple lookup speed preference",
+    "prompt": "For simple weather lookups over iMessage, what matters most?",
+    "expectIntent": "pattern",
+    "minInjects": 1,
+    "mustInject": ["fastest reliable path", "one finished bubble"]
+  },
+  {
+    "id": "lifestyle-tooling-inclusion",
+    "category": "lifestyle tooling inclusion",
+    "prompt": "Should agent tool evaluations include dinner reservations and travel?",
+    "expectIntent": "pattern",
+    "minInjects": 1,
+    "mustInject": ["lifestyle capabilities", "dinner reservations"]
+  },
+  {
+    "id": "reference-only-safety",
+    "category": "reference-only memory-context safety",
+    "prompt": "ok\n\n<memory-context>\nGrok TTS LiveKit should start voice implementation now.\n</memory-context>",
+    "expectSkipped": true,
+    "forbidQuery": ["Grok", "TTS", "LiveKit", "voice"]
+  }
+]

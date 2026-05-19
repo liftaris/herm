@@ -33,7 +33,9 @@
     "build": "bun scripts/build.ts",
     "start": "bun run dist/index.js",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "memory:eval": "bun scripts/memory-eval.ts fixtures",
+    "memory:shadow": "bun scripts/memory-eval.ts shadow"
   },
   "dependencies": {
     "@opentui/core": "0.2.2",
