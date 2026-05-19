@@ -47,6 +47,7 @@ export type Task = {
   workspace_kind: string | null; workspace_path: string | null
   skills: string[]
   max_runtime_seconds: number | null
+  review_required: boolean; review_count: number
 }
 
 export type Run = {
@@ -237,7 +238,26 @@ const toTask = (r: Record<string, unknown>): Task => ({
   workspace_path: (r.workspace_path as string) ?? null,
   skills: parseSkills(r.skills),
   max_runtime_seconds: (r.max_runtime_seconds as number) ?? null,
+  review_required: Boolean(r.review_required),
+  review_count: Number(r.review_count) || 0,
 })
+
+const reviewOf = (conn: Database): Map<string, number> => {
+  try {
+    const rows = conn.query(
+      `SELECT task_id, COUNT(*) AS n FROM task_comments
+       WHERE lower(body) LIKE '%review-required%'
+       GROUP BY task_id`,
+    ).all() as Array<{ task_id: string; n: number }>
+    return new Map(rows.map(r => [r.task_id, Number(r.n) || 1]))
+  } catch { return new Map() }
+}
+
+const markReview = (t: Task, m: Map<string, number>): Task => {
+  const n = m.get(t.id) ?? 0
+  if (!n) return t
+  return { ...t, review_required: true, review_count: n }
+}
 
 const toRun = (r: Record<string, unknown>): Run => ({
   id: Number(r.id),
@@ -278,8 +298,9 @@ export function boardOf(s: string): Map<Status, Task[]> {
        FROM tasks WHERE status != 'archived'
        ORDER BY priority DESC, updated_at DESC`,
     ).all() as Array<Record<string, unknown>>
+    const reviews = reviewOf(conn)
     for (const r of rows) {
-      const t = toTask(r)
+      const t = markReview(toTask(r), reviews)
       out.get(t.status)?.push(t)
     }
   } catch {}
@@ -312,7 +333,7 @@ export function detailOf(s: string, id: string): Detail | null {
     const events = eventsOf(conn, id)
     const latest = latestSummary(conn, id)
     return {
-      ...toTask(row), parents, children, comments,
+      ...markReview(toTask(row), reviewOf(conn)), parents, children, comments,
       runs, events, latest_summary: latest,
     }
   } catch { return null }
