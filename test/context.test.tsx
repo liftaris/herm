@@ -133,7 +133,7 @@ describe("Context tab", () => {
   describe("keyboard nav", () => {
     const msgs: Message[] = [{
       id: "m1", role: "user", timestamp: 0,
-      parts: [{ type: "text", content: "hello world ".repeat(50) }],
+      parts: [{ type: "text", content: "hello world ".repeat(50), streaming: false }],
       usage: { input: 200, output: 0, total: 200 },
     }]
     const info: SessionInfo = { model: "test", context_max: 10_000 }
