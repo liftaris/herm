@@ -188,6 +188,8 @@ const Card = memo((p: {
   onHover: () => void; onPick: () => void
 }) => {
   const theme = useTheme().theme
+  const title = `${p.t.review_required ? "⚑ " : ""}${p.t.title}`
+  const label = p.t.review_count ? `  ${p.t.review_count} review${p.t.review_count === 1 ? "" : "s"}` : ""
   return (
     <box id={p.id} height={2} flexDirection="row" paddingLeft={1}
          border={RULE} borderStyle="single" borderColor={theme.borderSubtle}
@@ -198,7 +200,7 @@ const Card = memo((p: {
         {p.sev
           ? <><span fg={sevColor(p.sev, theme)}>{SEV_GLYPH[p.sev]}</span>{" "}</>
           : null}
-        {p.t.title}
+        {`${title}${label}`}
       </Ticker>
     </box>
   )

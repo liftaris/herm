@@ -94,6 +94,8 @@ beforeAll(() => {
     (task_id, filename, stored_path, content_type, size, uploaded_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ["t1", "spec.pdf", defaultBlob, "application/pdf", 9, "kaio", now - 900])
+  db.run("INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?,?,?,?)",
+    ["t5", "worker", "review-required: implementation ready for eyes", now - 700])
   db.close()
 
   // Second board with its own DB + log dir, and board.json metadata.
@@ -129,6 +131,7 @@ describe("hermes-kanban readers", () => {
     expect(b.get("blocked")?.[0]?.id).toBe("t5")
     expect(b.get("done")?.[0]?.result).toContain("memo.md")
     expect(b.get("triage")?.[0]?.id).toBe("t0")
+    expect(b.get("blocked")?.[0]?.review_required).toBe(true)
   })
 
   test("boardOf() reads per-slug without touching current", () => {
@@ -370,6 +373,8 @@ describe("Kanban tab", () => {
     // One-line cards: title renders, meta line does not.
     expect(f).toContain("research cost")
     expect(f).toContain("upgrade forge")
+    expect(f).toMatch(/1 rev(?:iew)?/)
+    expect(f).toContain("⚑ need decision")
     expect(f).not.toMatch(/t2\s+researcher\s+P3/)
     t.destroy()
   })
