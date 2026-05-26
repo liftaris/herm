@@ -376,6 +376,35 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
           return
         }
         case "redraw": redraw(renderer); return
+        case "browser": {
+          // Route /browser through browser.manage RPC instead of slash.exec
+          // so BROWSER_CDP_URL is set in the gateway process where AIAgent runs.
+          // Mirrors ui-tui/src/app/slash/commands/ops.ts (issue #82).
+          const parts = arg.trim().split(/\s+/)
+          const sub = parts[0]?.toLowerCase() || "connect"
+          const url = parts[1]
+          if (!["connect", "disconnect", "status"].includes(sub)) {
+            toast.show({ variant: "error", message: "usage: /browser [connect|disconnect|status] [url]" })
+            return
+          }
+          const payload: Record<string, string> = { action: sub }
+          if (sub === "connect" && url) payload.url = url
+          gw.request<{ connected: boolean; url?: string; messages?: string[] }>("browser.manage", payload)
+            .then(r => {
+              for (const m of r.messages ?? []) {
+                x.dispatch({ kind: "system", text: m })
+              }
+              if (r.connected) {
+                x.dispatch({ kind: "system", text: `Browser connected${r.url ? ` → ${r.url}` : ""}` })
+              } else if (sub === "disconnect") {
+                x.dispatch({ kind: "system", text: "Browser disconnected" })
+              } else if (sub === "status") {
+                x.dispatch({ kind: "system", text: r.url ?? "No browser connected" })
+              }
+            })
+            .catch((e: Error) => toast.show({ variant: "error", message: `browser: ${e.message}` }))
+          return
+        }
         case "compact":
         case "setup":
           x.dispatch({ kind: "system",

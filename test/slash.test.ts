@@ -53,7 +53,7 @@ describe("slash", () => {
   test("LOCAL_NAMES covers session-mutating commands", () => {
     for (const n of ["resume", "branch", "compress", "undo", "retry", "model",
                      "quit", "copy", "paste", "image", "background", "voice",
-                     "mouse", "redraw", "save"])
+                     "mouse", "redraw", "save", "browser"])
       expect(LOCAL_NAMES.has(n)).toBe(true)
   })
 
