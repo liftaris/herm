@@ -14,11 +14,16 @@ const REQUEST_MS = 120_000
 
 /** Locate the hermes-agent source tree (gateway + hermes_cli live here).
  *  Default: ~/.hermes/hermes-agent (where `hermes update` installs it).
+ *  Fallback: /usr/local/lib/hermes-agent (FHS layout for root Linux installs).
  *  Override with HERMES_AGENT_ROOT for dev clones / exotic layouts. */
 export function hermesAgentRoot(): string {
   if (process.env.HERMES_AGENT_ROOT) return process.env.HERMES_AGENT_ROOT
   const home = process.env.HOME || homedir()
-  return `${home}/.hermes/hermes-agent`
+  const homePath = `${home}/.hermes/hermes-agent`
+  if (existsSync(homePath)) return homePath
+  const fhs = "/usr/local/lib/hermes-agent"
+  if (existsSync(fhs)) return fhs
+  return homePath
 }
 
 type Pending = {

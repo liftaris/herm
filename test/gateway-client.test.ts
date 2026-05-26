@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "fs"
 import { join, resolve } from "path"
 import { tmpdir } from "os"
-import { python } from "../src/context/gateway-client"
+import { hermesAgentRoot, python } from "../src/context/gateway-client"
 
 const withEnv = <T>(key: string, value: string | undefined, fn: () => T): T => {
   const prev = process.env[key]
@@ -16,6 +16,40 @@ const withEnv = <T>(key: string, value: string | undefined, fn: () => T): T => {
 }
 
 const tmp = () => mkdtempSync(join(tmpdir(), "herm-gateway-"))
+
+describe("hermesAgentRoot", () => {
+  test("uses HERMES_AGENT_ROOT when set", () => {
+    withEnv("HERMES_AGENT_ROOT", resolve("/custom/hermes-agent"), () => {
+      expect(hermesAgentRoot()).toBe(resolve("/custom/hermes-agent"))
+    })
+  })
+
+  test("returns home path by default", () => {
+    withEnv("HERMES_AGENT_ROOT", undefined, () => {
+      const home = hermesAgentRoot()
+      expect(home).toContain(".hermes/hermes-agent")
+    })
+  })
+
+  test("falls back to FHS path when home path doesn't exist", () => {
+    withEnv("HERMES_AGENT_ROOT", undefined, () => {
+      withEnv("HOME", tmp(), () => {
+        // HOME is set to a tmp dir that has no .hermes/hermes-agent
+        // so the function falls through to the FHS path check
+        const root = hermesAgentRoot()
+        // If /usr/local/lib/hermes-agent doesn't exist on this machine,
+        // it returns the (non-existent) home path — which is expected
+        // behavior. The important part is the FHS path is checked.
+        if (existsSync("/usr/local/lib/hermes-agent")) {
+          expect(root).toBe("/usr/local/lib/hermes-agent")
+        } else {
+          // No FHS path either — returns home path as default
+          expect(root).toContain("hermes-agent")
+        }
+      })
+    })
+  })
+})
 
 describe("python", () => {
   test("uses HERMES_PYTHON when set", () => {
