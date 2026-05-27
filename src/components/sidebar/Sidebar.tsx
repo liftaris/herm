@@ -1,13 +1,16 @@
-import { useState, memo, type ReactNode } from "react"
+import { useState, memo, type ReactNode, useRef } from "react"
 import { AnimatedAvatar } from "../avatar/AnimatedAvatar"
 import type { ParsedEikon } from "../avatar/eikon"
 import { useTheme } from "../../theme"
 import type { AvatarState } from "../avatar/states"
 import type { SessionInfo } from "../../context/wire"
 import type { Usage } from "../../types/message"
-import { useGitBranch, rtrunc } from "../../utils/git"
+import { git } from "../../utils/git"
 import { Tail } from "../chat/ThoughtCloud"
 import { ContextGauge } from "./ContextGauge"
+import { useDialog } from "../../ui/dialog"
+import { useKeyboard } from "@opentui/react"
+import { useKeys } from "../../keys"
 
 // The pillar body carries a compact identity block, the MCP operational
 // section, and a context-usage gauge at the bottom. Stats/Memory/Recent/
@@ -71,6 +74,36 @@ const Row = (props: { label: string; value: string; strong?: boolean; block?: bo
   )
 }
 
+/** Dialog overlay for the changed-files list — opens on click from the
+ *  sidebar Changes row. Esc or backdrop click dismisses. */
+const ChangesDialog = memo((props: { files: git.File[]; onClose: () => void }) => {
+  const theme = useTheme().theme
+
+  return (
+    <box flexDirection="column" width={70}>
+      <text fg={theme.text}>
+        <strong>{`Changed Files (${props.files.length})`}</strong>
+      </text>
+      <box height={1} />
+      <scrollbox scrollY maxHeight={20} paddingRight={1}
+        contentOptions={{ flexDirection: "column" }}>
+        {props.files.map(f => (
+          <box key={f.file} height={1} paddingRight={1}>
+            <text>
+              <span fg={theme.textMuted}> </span>
+              <span fg={f.code[0] === "?" ? theme.diffAdded
+                : f.code[0] === "A" || f.code[1] === "A" ? theme.diffAdded
+                : f.code[0] === "D" || f.code[1] === "D" ? theme.diffRemoved
+                : theme.warning}>{f.code}</span>
+              <span fg={theme.textMuted}>{"  " + f.file}</span>
+            </text>
+          </box>
+        ))}
+      </scrollbox>
+    </box>
+  )
+})
+
 export const Sidebar = memo((props: {
   agentState?: AvatarState
   info?: SessionInfo | null
@@ -89,8 +122,24 @@ export const Sidebar = memo((props: {
 
   const [mcpOpen, setMcpOpen] = useState(false)
 
+  const dialog = useDialog()
   const cwd = info?.cwd ?? process.cwd()
-  const branch = useGitBranch(cwd)
+  const branch = git.useGitBranch(cwd)
+  const changes = git.useGitStatus(cwd)
+  const keys = useKeys()
+  const ref = useRef(changes)
+  ref.current = changes
+
+  useKeyboard((key) => {
+    const cur = ref.current
+    if (!cur || cur.files.length === 0) return
+    if (keys.match("sidebar.changes", key)) {
+      key.stopPropagation()
+      dialog.replace(
+        <ChangesDialog files={cur.files} onClose={() => dialog.clear()} />
+      )
+    }
+  })
 
   return (
     <box width={WIDTH} flexDirection="column">
@@ -121,7 +170,20 @@ export const Sidebar = memo((props: {
              strong={!!props.profile && props.profile !== "default"} />
         <Row label="Model" value={info?.model ?? "—"} />
         {info?.cwd ? <Row label="cwd" value={info.cwd} /> : null}
-        {branch ? <Row label="Branch" value={rtrunc(branch, INNER - PAD_L - 2)} /> : null}
+        {branch ? <Row label="Branch" value={git.rtrunc(branch, INNER - PAD_L - 2)} /> : null}
+
+        {changes && (changes.added + changes.modified + changes.deleted) > 0 ? (
+          <box height={1}
+               onMouseDown={() => dialog.replace(
+                 <ChangesDialog files={changes.files} onClose={() => dialog.clear()} />
+               )}>
+            <text>
+              <span fg={theme.textMuted}>{"▸ "}</span>
+              <span fg={theme.text}><strong>Changes</strong></span>
+              <span fg={theme.textMuted}>{`  +${changes.added} ~${changes.modified} -${changes.deleted}`}</span>
+            </text>
+          </box>
+        ) : null}
 
         {(info?.mcp_servers?.length ?? 0) > 0 ? (() => {
           const srv = info!.mcp_servers!

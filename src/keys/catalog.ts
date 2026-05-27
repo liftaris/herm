@@ -49,6 +49,7 @@ export const DEFAULTS = {
   "session.timeline":  def("<leader>g",            "Session timeline",                   "global"),
   "theme.pick":        def("<leader>t",            "Switch theme",                       "global"),
   "model.pick":        def("<leader>m",            "Switch model",                       "global"),
+  "sidebar.changes":   def("<leader>d",            "Show changed files",                 "global"),
   "status.open":       def("<leader>i",            "Show status",                        "global"),
   "list.up":           def("up",                   "Move selection up",                  "list"),
   "list.down":         def("down",                 "Move selection down",                "list"),
