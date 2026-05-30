@@ -69,13 +69,13 @@ const SkillRow = memo((props: {
   );
 });
 
-const HitRow = memo((props: { hit: Hit; selected: boolean; onHover: () => void }) => {
+const HitRow = memo((props: { hit: Hit; selected: boolean; onHover: () => void; onSelect: () => void }) => {
   const theme = useTheme().theme;
   const on = props.selected;
   const info = meta(props.hit);
   return (
     <box flexDirection="column" minHeight={info ? 2 : 1} backgroundColor={on ? theme.backgroundElement : undefined}
-         onMouseMove={props.onHover}>
+         onMouseMove={props.onHover} onMouseDown={props.onSelect}>
       <box flexDirection="row" height={1}>
         <Col w={2} fg={on ? theme.primary : theme.textMuted}>{on ? "▸ " : "  "}</Col>
         <Col w={28} fg={on ? theme.accent : theme.text}>{props.hit.name}</Col>
@@ -479,7 +479,7 @@ export const Skills = memo((props: { focused?: boolean }) => {
             <box flexDirection="column" width="100%">
               {hits.map((h, i) => (
                 <HitRow key={h.identifier ?? h.name} hit={h} selected={i === selected}
-                  onHover={() => setSelected(i)} />
+                  onHover={() => setSelected(i)} onSelect={() => install(h)} />
               ))}
             </box>
           </scrollbox>
