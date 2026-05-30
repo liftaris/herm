@@ -16,12 +16,13 @@ export type GenerateOut = { path: string } | { err: string }
 export type GenerateFn = (kind: GenerateKind, prompt: string, opts: GenerateOpts) => Promise<GenerateOut>
 
 const ROOT = () => hermesPath("hermes-agent")
+const isWin = process.platform === "win32"
 const PY = () => {
   for (const v of ["venv", ".venv"]) {
-    const p = `${ROOT()}/${v}/bin/python`
-    if (existsSync(p)) return p
+    const bin = isWin ? `${ROOT()}/${v}/Scripts/python.exe` : `${ROOT()}/${v}/bin/python`
+    if (existsSync(bin)) return bin
   }
-  return "python3"
+  return isWin ? "python" : "python3"
 }
 
 /** API keys live in ~/.hermes/.env (per AGENTS.md: env file is keys-
@@ -87,7 +88,9 @@ export async function probe(): Promise<{ image: boolean; video: boolean }> {
     "from tools.video_generation_tool import check_video_generation_requirements as cv",
     "print(json.dumps({'image': bool(ci()), 'video': bool(cv())}))",
   ].join("; ")
-  const r = Bun.spawn([PY(), "-c", src], { cwd: root, env: env(), stdout: "pipe", stderr: "pipe" })
+  let r
+  try { r = Bun.spawn([PY(), "-c", src], { cwd: root, env: env(), stdout: "pipe", stderr: "pipe" }) }
+  catch { return { image: false, video: false } }
   const out = await new Response(r.stdout).text()
   if ((await r.exited) !== 0) return { image: false, video: false }
   const last = out.trim().split("\n").pop()!
@@ -95,7 +98,7 @@ export async function probe(): Promise<{ image: boolean; video: boolean }> {
 }
 
 async function fetchTo(url: string, ext: string): Promise<string> {
-  const tmp = `${process.env.TMPDIR ?? "/tmp"}/eikon-gen-${Date.now()}${ext}`
+  const tmp = `${process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp"}/eikon-gen-${Date.now()}${ext}`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`download ${res.status}`)
   await Bun.write(tmp, await res.arrayBuffer())

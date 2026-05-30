@@ -442,7 +442,12 @@ const BLANK: Frame = Array.from({ length: H }, () => " ".repeat(W))
 // provider availability (configured key/gateway), not just the
 // toolset toggle. Cached at module scope; tests reset via setImpl.
 let genCaps: Promise<{ image: boolean; video: boolean }> | null = null
-const probeGen = () => (genCaps ??= gen.probeCached())
+const probeGen = () => {
+  if (genCaps) return genCaps
+  const p = gen.probeCached()
+  p.catch(() => { genCaps = null })
+  return (genCaps = p)
+}
 /** Test-only — wipe the gen-caps cache between mountNode calls. */
 export const resetToolsetsCache = () => { genCaps = null }
 
@@ -541,7 +546,7 @@ export const EikonStudio = memo((props: {
   // at module scope — repeated mounts share one subprocess.
   useEffect(() => {
     let dead = false
-    void probeGen().then(c => { if (!dead) setGenOk(c) })
+    void probeGen().then(c => { if (!dead) setGenOk(c) }).catch(() => {})
     return () => { dead = true }
   }, [])
 
