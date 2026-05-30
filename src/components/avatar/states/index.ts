@@ -13,7 +13,9 @@ export type AvatarState =
 // the source of truth; `/eikon`-picked files override per state. A
 // one-frame blank guards against a malformed bundle — the sidebar box
 // is fixed-height so worst case is an empty pillar, not a crash.
-const BLANK: EikonState = { fps: 1, loopFrom: 1, frames: [[""]] };
+// Shape matches what AnimatedAvatar expects: frames + loopFrom.
+// EikonState itself uses snake_case but the renderer uses camelCase.
+const BLANK = { fps: 1, frame_count: 1, loop_from: 1, frames: [[" "]], loopFrom: 1 } as EikonState & { frames: string[][]; loopFrom: number }
 
 export const DEFAULT_EIKON = (() => {
   try { return parseEikon(defaultEikonText) } catch { return undefined }
