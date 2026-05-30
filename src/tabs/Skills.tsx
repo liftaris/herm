@@ -21,8 +21,16 @@ import { openCurator } from "../dialogs/curator";
 
 const NO_EVENTS: LineageEvent[] = []
 
-type Hit = { name: string; description?: string }
+type Hit = { name: string; description?: string; identifier?: string; source?: string; trust_level?: string }
 type Sort = "name" | "used"
+
+const meta = (hit: Hit): string => {
+  const parts = []
+  if (hit.identifier) parts.push(hit.identifier)
+  if (hit.source) parts.push(hit.source)
+  if (hit.trust_level) parts.push(hit.trust_level)
+  return parts.join(" · ")
+}
 
 // ISO timestamp → epoch seconds (or null if unparseable/empty).
 const iso = (s: string | null | undefined): number | null => {
@@ -64,12 +72,21 @@ const SkillRow = memo((props: {
 const HitRow = memo((props: { hit: Hit; selected: boolean; onHover: () => void }) => {
   const theme = useTheme().theme;
   const on = props.selected;
+  const info = meta(props.hit);
   return (
-    <box flexDirection="row" height={1} backgroundColor={on ? theme.backgroundElement : undefined}
+    <box flexDirection="column" minHeight={info ? 2 : 1} backgroundColor={on ? theme.backgroundElement : undefined}
          onMouseMove={props.onHover}>
-      <Col w={2} fg={on ? theme.primary : theme.textMuted}>{on ? "▸ " : "  "}</Col>
-      <Col w={28} fg={on ? theme.accent : theme.text}>{props.hit.name}</Col>
-      <Col grow min={8} fg={theme.textMuted}>{props.hit.description || "—"}</Col>
+      <box flexDirection="row" height={1}>
+        <Col w={2} fg={on ? theme.primary : theme.textMuted}>{on ? "▸ " : "  "}</Col>
+        <Col w={28} fg={on ? theme.accent : theme.text}>{props.hit.name}</Col>
+        <Col grow min={8} fg={theme.textMuted}>{props.hit.description || "—"}</Col>
+      </box>
+      {info ? (
+        <box flexDirection="row" height={1}>
+          <Col w={2} fg={theme.textMuted}>{""}</Col>
+          <Col grow min={8} fg={theme.info}>{info}</Col>
+        </box>
+      ) : null}
     </box>
   );
 });
@@ -356,16 +373,17 @@ export const Skills = memo((props: { focused?: boolean }) => {
     setSearching(false); setQuery(""); setHits([]); setSelected(0);
   }, []);
 
-  const install = useCallback(async (name: string) => {
+  const install = useCallback(async (hit: Hit) => {
+    const query = hit.identifier ?? hit.name;
     const ok = await openConfirm(dialog, {
       title: "Install skill?",
-      body: name,
+      body: query,
       yes: "install",
     });
     if (!ok) return;
-    gw.request("skills.manage", { action: "install", query: name })
+    gw.request("skills.manage", { action: "install", query })
       .then(() => {
-        toast.show({ variant: "success", message: `Installed ${name}` });
+        toast.show({ variant: "success", message: `Installed ${query}` });
         exit();
         load();
       })
@@ -384,7 +402,7 @@ export const Skills = memo((props: { focused?: boolean }) => {
       if (key.name === "down") return setSelected(p => Math.min(count - 1, p + 1));
       if (key.name === "return") {
         const hit = hits[selected];
-        if (hit) install(hit.name);
+        if (hit) install(hit);
         return;
       }
       if (key.raw && key.raw.length === 1 && key.raw >= " ") {
@@ -460,7 +478,7 @@ export const Skills = memo((props: { focused?: boolean }) => {
           <scrollbox scrollY flexGrow={1}>
             <box flexDirection="column" width="100%">
               {hits.map((h, i) => (
-                <HitRow key={h.name} hit={h} selected={i === selected}
+                <HitRow key={h.identifier ?? h.name} hit={h} selected={i === selected}
                   onHover={() => setSelected(i)} />
               ))}
             </box>

@@ -120,6 +120,47 @@ describe("Skills tab", () => {
     t.destroy()
   })
 
+  test("hub search shows metadata and installs by canonical identifier", async () => {
+    const installed: string[] = []
+    const gw = new MockGateway({
+      "skills.manage": p => {
+        if (p.action === "list") return { skills: {} }
+        if (p.action === "search") return {
+          results: [{
+            name: "display-name",
+            description: "remote pkg",
+            identifier: "github:owner/repo/skills/display-name",
+            source: "github",
+            trust_level: "trusted",
+          }],
+        }
+        if (p.action === "install") { installed.push(p.query as string); return { ok: true } }
+        return {}
+      },
+    })
+    const t = await mountNode(<Skills focused />, { gw, width: 180, height: 40 })
+    await until(t, () => t.frame().includes("Skills (0)"))
+
+    await act(async () => { await t.keys.typeText("/") })
+    await until(t, () => t.frame().includes("Hub Search"))
+    await act(async () => { await t.keys.typeText("net") })
+    await until(t, () => t.frame().includes("display-name"))
+    expect(t.frame()).toContain("remote pkg")
+    expect(t.frame()).toContain("github:owner/repo/skills/display-name")
+    expect(t.frame()).toContain("github")
+    expect(t.frame()).toContain("trusted")
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Install skill?"))
+    expect(t.frame()).toContain("github:owner/repo/skills/display-name")
+
+    await act(async () => { await t.keys.typeText("y") })
+    await until(t, () => installed.length > 0)
+    expect(installed).toEqual(["github:owner/repo/skills/display-name"])
+    await until(t, () => t.frame().includes("Installed github:owner/repo/skills/display-name"))
+    t.destroy()
+  })
+
   test("hub search drops stale responses", async () => {
     let hold!: (v: unknown) => void
     const gw = new MockGateway({
