@@ -4,6 +4,7 @@ import { SUB_TABS, EIKON_TAB } from "../app/tabs"
 import { useKeys } from "../keys"
 import { EikonStudio } from "./EikonStudio"
 import { EikonGallery } from "./EikonGallery"
+import { EikonImport } from "./EikonImport"
 import type { SidebarPreview } from "../components/sidebar/Sidebar"
 
 type Props = {
@@ -15,8 +16,8 @@ type Props = {
 }
 
 // Gallery is the landing sub-tab; it lists installed + bundled eikons and
-// can hand a name to Studio for editing. A third "Advanced"
-// sub-tab (rasterizer setup) is reserved — see tabs.ts.
+// can hand a name to Studio for editing. Import lets users paste an
+// eikon-haven.top URL or slug to import eikons from the haven.
 export const EikonGroup = memo((props: Props) => {
   const keys = useKeys()
   const labels = SUB_TABS[EIKON_TAB]!
@@ -35,6 +36,9 @@ export const EikonGroup = memo((props: Props) => {
         </Pane>
         <Pane visible={props.sub === 1}>
           <EikonStudio focused={!!props.focused && props.sub === 1} name={target} />
+        </Pane>
+        <Pane visible={props.sub === 2}>
+          <EikonImport focused={!!props.focused && props.sub === 2} />
         </Pane>
       </box>
     </box>

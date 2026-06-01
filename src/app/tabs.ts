@@ -26,9 +26,7 @@ export const SUB_TABS: Record<number, readonly string[]> = {
   [SESSIONS_TAB]:   ["List", "Context", "Analytics"],
   [AUTOMATION_TAB]: ["Kanban", "Profiles", "Cron"],
   [CONFIG_TAB]:     ["Config", "Skills", "Toolsets", "Env", "Memory"],
-  // A third "Advanced" sub-tab (rasterizer install/config) is reserved
-  // — not yet implemented; group clamps defensively like the others.
-  [EIKON_TAB]:      ["Gallery", "Studio"],
+  [EIKON_TAB]:      ["Gallery", "Studio", "Import"],
 }
 
 /** Slash-command name → {tab, sub}. `sub` is the sub-tab index within that
@@ -51,4 +49,5 @@ export const TAB_SLASH: Record<string, { tab: number; sub: number }> = {
   memory:     { tab: CONFIG_TAB,     sub: 4 },
   studio:     { tab: EIKON_TAB,      sub: 1 },
   gallery:    { tab: EIKON_TAB,      sub: 0 },
+  import:     { tab: EIKON_TAB,      sub: 2 },
 }
