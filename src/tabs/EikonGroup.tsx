@@ -4,6 +4,7 @@ import { SUB_TABS, EIKON_TAB } from "../app/tabs"
 import { EikonStudio } from "./EikonStudio"
 import { EikonGallery } from "./EikonGallery"
 import { EikonMarketplace } from "./EikonMarketplace"
+import { EikonImport } from "./EikonImport"
 
 type Props = {
   focused?: boolean
@@ -29,6 +30,9 @@ export const EikonGroup = memo((props: Props) => {
         </Pane>
         <Pane visible={props.sub === 2}>
           <EikonStudio focused={!!props.focused && props.sub === 2} name={target} />
+        </Pane>
+        <Pane visible={props.sub === 3}>
+          <EikonImport focused={!!props.focused && props.sub === 3} />
         </Pane>
       </box>
     </box>

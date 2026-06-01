@@ -46,10 +46,11 @@ afterEach(() => {
 })
 
 test("Eikon sub-tabs put Studio after Library and Catalog and preserve slash routes", () => {
-  expect(SUB_TABS[EIKON_TAB]).toEqual(["Library", "Catalog", "Studio"])
+  expect(SUB_TABS[EIKON_TAB]).toEqual(["Library", "Catalog", "Studio", "Import"])
   expect(TAB_SLASH.library).toEqual({ tab: EIKON_TAB, sub: 0 })
   expect(TAB_SLASH.catalog).toEqual({ tab: EIKON_TAB, sub: 1 })
   expect(TAB_SLASH.studio).toEqual({ tab: EIKON_TAB, sub: 2 })
+  expect(TAB_SLASH.import).toEqual({ tab: EIKON_TAB, sub: 3 })
   expect(Object.keys(TAB_SLASH).filter(k => ["gallery", "marketplace"].includes(k))).toEqual([])
 })
 
