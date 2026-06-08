@@ -30,7 +30,7 @@ const SELECTS: Record<string, string[]> = {
   "display.details_mode": ["hidden", "collapsed", "expanded"],
   "display.thinking_mode": ["collapsed", "truncated", "full"],
   "display.tool_progress": ["off", "new", "all", "verbose"],
-  "approvals.mode": ["manual", "ask", "yolo", "deny"],
+  "approvals.mode": ["manual", "smart", "off"],
 }
 
 const get = (obj: Record<string, unknown>, path: string): unknown => {

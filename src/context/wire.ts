@@ -164,6 +164,7 @@ export type SessionInfo = {
   model?: string
   cwd?: string
   session_id?: string
+  yolo?: boolean
   /**
    * Live tool catalog from gateway session.info. state.db is canonical for
    * historical sessions, while legacy sessions/session_*.json snapshots are
@@ -319,6 +320,7 @@ export type CommandsCatalogResponse = {
 export type ConfigSetResponse = {
   value?: string
   info?: SessionInfo
+  scope?: "session" | "global"
   warning?: string
   history_reset?: boolean
 }

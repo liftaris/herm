@@ -3,7 +3,7 @@
 // the imperative handle so there is exactly one global useKeyboard.
 
 import { forwardRef, memo, useImperativeHandle, useRef, useState, useCallback, useMemo, useEffect } from "react"
-import type { TextareaRenderable, PasteEvent } from "@opentui/core"
+import type { TextareaRenderable, PasteEvent, MouseEvent } from "@opentui/core"
 import { decodePasteBytes } from "@opentui/core"
 import { useTheme } from "../../theme"
 import { useKeys, toBindings } from "../../keys"
@@ -55,6 +55,7 @@ type Props = {
   streaming: boolean
   status?: string
   model?: string
+  yolo?: boolean
   /** Set for ~5s after the first Esc of the interrupt double-tap. */
   escHint?: boolean
   queue?: ReadonlyArray<string>
@@ -71,6 +72,7 @@ type Props = {
   onEnqueue?: (text: string) => void
   onDequeue?: (i: number) => void
   onSteer?: () => void
+  onYolo?: (scope: "session" | "global") => void
   /** Enter pressed with an empty buffer. Return true to consume. */
   onEmptyEnter?: () => boolean
   /** Fires on the empty↔non-empty edge of the input buffer. */
@@ -78,6 +80,9 @@ type Props = {
 }
 
 const MAX_ROWS = 6
+
+export const yoloScopeFromMouse = (e: Pick<MouseEvent, "modifiers">): "session" | "global" =>
+  e.modifiers.shift ? "global" : "session"
 
 function fmt(n: number): string {
   if (n < 1000) return String(n)
@@ -527,7 +532,20 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>((props, ref) => {
         <box
           height={1}
           flexDirection="row"
-          onMouseDown={() => props.onSteer?.()}
+          onMouseDown={(e: MouseEvent) => { e.stopPropagation(); props.onYolo?.(yoloScopeFromMouse(e)) }}
+        >
+          <text onMouseDown={(e: MouseEvent) => { e.stopPropagation(); props.onYolo?.(yoloScopeFromMouse(e)) }}>
+            <span fg={props.yolo ? theme.warning : theme.borderSubtle}>⚡ </span>
+            <span fg={props.yolo ? theme.warning : theme.textMuted}>yolo</span>
+            <span fg={theme.textMuted}> </span>
+            <span fg={theme.accent}>{keys.print("session.yoloGlobal")}</span>
+          </text>
+        </box>
+        <text fg={theme.textMuted}>  </text>
+        <box
+          height={1}
+          flexDirection="row"
+          onMouseDown={(e: MouseEvent) => { e.stopPropagation(); props.onSteer?.() }}
         >
           <text>
             <span fg={theme.borderSubtle}>◇ </span>

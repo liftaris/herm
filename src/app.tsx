@@ -3,7 +3,7 @@ import { Profiler, useState, useEffect, useRef, useCallback, useMemo, useReducer
 import * as perf from "./utils/perf"
 import { hasInterp, interpolate } from "./utils/interpolate"
 import { GatewayProvider, useGateway, useGatewayRestart, type Gateway } from "./context/gateway"
-import type { SessionInfo, TranscriptMessage, ImageAttachResponse } from "./context/wire"
+import type { ConfigSetResponse, SessionInfo, TranscriptMessage, ImageAttachResponse } from "./context/wire"
 import type { Message, Usage } from "./types/message"
 import { text as msgText } from "./types/message"
 import { CLOUD_MIN } from "./components/chat/ThoughtCloud"
@@ -320,6 +320,22 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     setQueue(q => [...q, t])
   }, [busy, gw, toast])
   const onAttach = useCallback((r: ImageAttachResponse) => setAttachments(a => [...a, r]), [])
+  const toggleYolo = useCallback((scope: "session" | "global") => {
+    gw.request<ConfigSetResponse>("config.set", scope === "global"
+      ? { key: "yolo", scope: "global" }
+      : { key: "yolo" })
+      .then(r => {
+        if (r.info) {
+          setInfo(r.info)
+          setUsage(r.info.usage)
+        } else {
+          setInfo(prev => prev ? { ...prev, yolo: !prev.yolo } : prev)
+        }
+        toast.show({ variant: "success", message: `yolo ${r.value ?? "toggled"}${scope === "global" ? " (global)" : ""}` })
+        if (r.warning) toast.show({ variant: "warning", message: r.warning })
+      })
+      .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+  }, [gw, toast])
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
@@ -739,6 +755,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     onNotice: (text) => dispatch({ kind: "system", text }),
     onToggleSidebar: () => setHideSidebar(v => !v),
     onSteer: openSteer,
+    onYoloGlobal: () => toggleYolo("global"),
     onStash: () => {
       const c = composer.current
       const v = c?.value().trim() ?? ""
@@ -849,6 +866,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
                 focused={inputFocused} canSubmitPrompt={capabilities.canSubmitPrompt} ready={ready} streaming={turn.streaming}
                 status={status}
                 model={info?.model}
+                yolo={info?.yolo}
                 escHint={escHint}
                 queue={queue}
                 attachments={attachments}
@@ -859,6 +877,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
                 onEnqueue={onEnqueue}
                 onDequeue={dequeue}
                 onSteer={openSteer}
+                onYolo={toggleYolo}
                 onDirty={setComposing}
                 onEmptyEnter={onEmptyEnter}
               />

@@ -40,7 +40,7 @@ import { TAB_SLASH } from "./tabs"
 import { transcriptToMessages, type Action, type TurnState } from "./turnReducer"
 import type { SlashCommand } from "./slashCommands"
 import type { ComposerHandle } from "../components/chat/Composer"
-import type { SessionInfo, TranscriptMessage, ImageAttachResponse } from "../context/wire"
+import type { ConfigSetResponse, SessionInfo, TranscriptMessage, ImageAttachResponse } from "../context/wire"
 import type { Message, Usage } from "../types/message"
 import { text as msgText } from "../types/message"
 import type { useSession } from "./useSession"
@@ -69,7 +69,7 @@ export type SlashCtx = {
   setFocusRegion: (r: "input" | "content") => void
   setSplash: (v: boolean) => void
   setAttachments: React.Dispatch<React.SetStateAction<ImageAttachResponse[]>>
-  setInfo: (i: SessionInfo) => void
+  setInfo: React.Dispatch<React.SetStateAction<SessionInfo | null>>
   setUsage: React.Dispatch<React.SetStateAction<Usage | undefined>>
   setTitle: (t: string) => void
 
@@ -188,6 +188,20 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
     const x = ctx.current
     if (c.target === "local") {
       switch (c.name) {
+        case "__yolo_global":
+          gw.request<ConfigSetResponse>("config.set", { key: "yolo", scope: "global" })
+            .then(r => {
+              if (r.info) {
+                x.setInfo(r.info)
+                x.setUsage(r.info.usage)
+              } else {
+                x.setInfo(prev => prev ? { ...prev, yolo: !prev.yolo } : prev)
+              }
+              toast.show({ variant: "success", message: `yolo ${r.value ?? "toggled"} (global)` })
+              if (r.warning) toast.show({ variant: "warning", message: r.warning })
+            })
+            .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+          return
         case "clear":
           destructive(arg,
             { title: "Clear session?", body: "Discards the in-memory transcript. Your session on disk is unchanged; reload to restore.", yes: "clear" },
@@ -538,6 +552,8 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
       onSelect: () => openThemePicker(dialog, themeCtx) },
     { title: "Switch Model", value: "model", action: "model.pick", category: "General",
       onSelect: () => openModelPicker(dialog, gw) },
+    { title: "Toggle Global YOLO", value: "yolo-global", description: "Persistent approval bypass", category: "Session",
+      onSelect: () => run({ name: "__yolo_global", target: "local" } as SlashCommand) },
     { title: "Pick Avatar", value: "eikon", description: "Choose sidebar .eikon avatar", category: "General",
       onSelect: () => pickEikon() },
     { title: "Rollback", value: "rollback", description: "Browse & restore checkpoints", category: "Session",

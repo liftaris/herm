@@ -63,6 +63,7 @@ type Opts = {
   onNotice: (text: string) => void
   onToggleSidebar: () => void
   onSteer: () => void
+  onYoloGlobal: () => void
   onStash: () => void
   /** Voice recording key binding + handler from useVoice hook. */
   voiceRecordKey?: VoiceKey
@@ -197,6 +198,12 @@ export function useAppKeys(o: Opts) {
 
     if (keys.match("session.steer", key)) {
       o.onSteer()
+      key.stopPropagation()
+      return
+    }
+
+    if (keys.match("session.yoloGlobal", key)) {
+      o.onYoloGlobal()
       key.stopPropagation()
       return
     }

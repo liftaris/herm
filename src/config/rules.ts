@@ -71,7 +71,7 @@ export const RULES: Record<string, Rule> = {
   "display.tool_progress": oneOf("off", "new", "all", "verbose"),
   "display.final_response_markdown": oneOf("render", "strip", "raw"),
   "logging.level": oneOf("DEBUG", "INFO", "WARNING", "ERROR"),
-  "approvals.mode": oneOf("manual", "ask", "yolo", "deny"),
+  "approvals.mode": oneOf("manual", "smart", "off"),
   "code_execution.mode": oneOf("project", "strict"),
 }
 

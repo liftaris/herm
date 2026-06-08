@@ -45,6 +45,7 @@ export const DEFAULTS = {
   "session.redo":      def("<leader>r",            "Redo last undo",                     "global"),
   "session.compress":  def("<leader>c",            "Compress context",                   "global"),
   "session.steer":     def("<leader>s",            "Steer active turn",                   "global"),
+  "session.yoloGlobal": def("<leader>z",            "Toggle global YOLO",                  "global"),
   "input.stash":       def("<leader>p",            "Stash prompt draft",                 "global"),
   "session.timeline":  def("<leader>g",            "Session timeline",                   "global"),
   "theme.pick":        def("<leader>t",            "Switch theme",                       "global"),
