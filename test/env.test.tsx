@@ -16,7 +16,7 @@ beforeEach(() => {
 
 describe("Env tab", () => {
   test("masks values by default; Space reveals all", async () => {
-    const t = await mountNode(<Env focused />)
+    const t = await mountNode(<Env focused />, { width: 120, height: 60 })
     await until(t, () => t.frame().includes("ANTHROPIC_API_KEY"))
 
     const f = t.frame()
@@ -80,6 +80,23 @@ describe("Env tab", () => {
     // Click header → collapses group.
     await tap("LLM Providers")
     expect(t.frame()).not.toContain("ANTHROPIC_API_KEY")
+    t.destroy()
+  })
+
+  test("catalog includes Photon setup and delivery variables", async () => {
+    const t = await mountNode(<Env focused />)
+    await until(t, () => t.frame().includes("PHOTON_PROJECT_ID"))
+    const f = t.frame()
+
+    expect(f).toContain("hermes photon setup")
+    expect(f).toContain("hermes photon status")
+    expect(f).toContain("hermes photon webhook register")
+    expect(f).toContain("Messaging")
+    expect(f).toContain("PHOTON_PROJECT_ID")
+    expect(f).toContain("PHOTON_PROJECT_SECRET")
+    expect(f).toContain("PHOTON_WEBHOOK_SECRET")
+    expect(f).toContain("PHOTON_HOME_CHANNEL")
+    expect(f).toContain("PHOTON_REQUIRE_MENTION")
     t.destroy()
   })
 

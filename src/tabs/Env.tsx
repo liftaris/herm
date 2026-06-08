@@ -167,7 +167,11 @@ export const Env = memo((props: { focused?: boolean }) => {
             <span fg={theme.accent}>█</span>
           </text>
         </box>
-      ) : null}
+      ) : (
+        <box height={1}>
+          <text fg={theme.textMuted}>Photon setup: hermes photon setup · hermes photon status · hermes photon webhook register</text>
+        </box>
+      )}
 
       <Hdr>
         <Col w={2} fg={theme.textMuted}>{""}</Col>

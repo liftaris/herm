@@ -36,6 +36,14 @@ describe("config/index", () => {
     expect(f!.type).toBe("boolean")
   })
 
+  test("photon config keys group with messaging platforms", () => {
+    const fs = buildFields({ photon: { require_mention: true } })
+    const f = fs.find(x => x.key === "photon.require_mention")
+    expect(f).toBeDefined()
+    expect(groupOf(f!.key)).toBe("platforms")
+    expect(rawGroupOf(f!.key)).toBe("photon")
+  })
+
   test("user dict under a known dict-typed leaf doesn't recurse into children", () => {
     const fs = buildFields({ providers: { openai: { api_key: "x" } } })
     expect(fs.find(x => x.key === "providers.openai.api_key")).toBeUndefined()

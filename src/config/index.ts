@@ -118,6 +118,7 @@ const MERGE: Record<string, string> = {
   lsp: "agent", x_search: "agent",
   slack: "platforms", telegram: "platforms", mattermost: "platforms",
   discord: "platforms", whatsapp: "platforms", matrix: "platforms",
+  photon: "platforms",
 }
 
 export const rawGroupOf = (key: string): string =>
