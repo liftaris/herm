@@ -28,9 +28,12 @@ process.env.PERF = ""
 // and pin a sentinel in the tracker so size never hits 0; the single
 // worker lives for the process and tears down with it.
 await getTreeSitterClient().initialize()
-const bag = (globalThis as Record<symbol, unknown>)[Symbol.for("@opentui/core/singleton")] as
-  { RendererTracker?: { addRenderer: (r: unknown) => void } }
-bag.RendererTracker?.addRenderer({})
+const bag = (globalThis as Record<symbol, unknown>)[Symbol.for("@opentui/core/singleton")] as {
+  RendererTracker?: { addRenderer?: (r: unknown) => void; renderers?: Set<unknown> }
+}
+const tracker = bag.RendererTracker
+if (tracker?.addRenderer) tracker.addRenderer({})
+else tracker?.renderers?.add({})
 
 // Theme bodies load lazily in prod (src/theme/load.ts). Prime the default
 // so ThemeProvider paints on the first frame in every test mount, matching

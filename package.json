@@ -36,8 +36,8 @@
     "screenshot:styled": "bun scripts/styled-screenshot.tsx"
   },
   "dependencies": {
-    "@opentui/core": "0.2.2",
-    "@opentui/react": "0.2.2",
+    "@opentui/core": "0.3.4",
+    "@opentui/react": "0.3.4",
     "eikon": "github:liftaris/eikon#03366100df3a91533b4206177a1a524a4463d5c2",
     "gpt-tokenizer": "^3.4.0",
     "open": "^11.0.0",
