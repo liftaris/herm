@@ -323,28 +323,7 @@ export type ConfigSetResponse = {
   history_reset?: boolean
 }
 
-export type AgentPluginStatus = "enabled" | "disabled" | "not-enabled" | string
-
-export type AgentPlugin = {
-  name: string
-  version: string
-  description: string
-  source: string
-  status: AgentPluginStatus
-}
-
-export type PluginsManageListRequest = { action: "list" }
-
-export type PluginsManageToggleRequest = { action: "toggle"; name: string; enable: boolean }
-export type PluginsManageRequest = PluginsManageListRequest | PluginsManageToggleRequest
-
-export type PluginsManageListResponse = {
-  plugins: AgentPlugin[]
-  user_count: number
-  bundled_count: number
-}
-
-export type PluginsManageToggleResponse = AgentPlugin
+export type { AgentPlugin, AgentPluginStatus, PluginsListResponse, PluginsToggleRequest } from "../agentPlugins"
 
 export type ModelPricing = {
   input: string

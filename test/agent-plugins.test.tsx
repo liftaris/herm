@@ -5,25 +5,18 @@ import { AgentPlugins } from "../src/tabs/AgentPlugins"
 import { mountNode, until, MockGateway } from "./harness"
 
 describe("Agent Plugins tab", () => {
-  test("renders upstream plugin rows and toggles through plugins.manage", async () => {
+  test("renders upstream plugin rows and toggles through shell bridge", async () => {
     const gw = new MockGateway({
-      "plugins.manage": p => {
-        if (p.action === "toggle") return {
-          name: p.name as string,
-          version: "1.2.3",
-          description: "captures traces",
-          source: "user",
-          status: p.enable ? "enabled" : "disabled",
-        }
-        return {
-          user_count: 1,
-          bundled_count: 1,
-          plugins: [
-            { name: "langfuse", version: "1.2.3", description: "captures traces", source: "user", status: "disabled" },
-            { name: "memory", version: "0.4.0", description: "memory provider", source: "bundled", status: "enabled" },
-          ],
-        }
-      },
+      "plugins.list": () => ({
+        user_count: 1,
+        bundled_count: 1,
+        plugins: [
+          { name: "langfuse", version: "1.2.3", description: "captures traces", source: "user", status: "disabled" },
+          { name: "memory", version: "0.4.0", description: "memory provider", source: "bundled", status: "enabled" },
+          { name: "fresh", version: "", description: "", source: "user", status: "not enabled" },
+        ],
+      }),
+      "shell.exec": p => ({ code: 0, stdout: `ran ${p.command}`, stderr: "" }),
     })
 
     const t = await mountNode(<AgentPlugins focused />, { gw, width: 170, height: 34 })
@@ -34,9 +27,13 @@ describe("Agent Plugins tab", () => {
     expect(t.frame()).toContain("bundled 1")
     expect(t.frame()).toContain("not Herm UI extensions")
 
+    expect(gw.last("plugins.list")?.params).toEqual({ action: "list" })
+    expect(gw.calls.map(c => c.method)).not.toContain("plugins.manage")
+
     act(() => t.keys.pressEnter())
-    await until(t, () => gw.calls.some(c => c.method === "plugins.manage" && c.params.action === "toggle"))
-    expect(gw.last("plugins.manage")?.params).toEqual({ action: "toggle", name: "langfuse", enable: true })
+    await until(t, () => gw.calls.some(c => c.method === "shell.exec"))
+    expect(gw.last("shell.exec")?.params).toEqual({ command: "hermes plugins enable 'langfuse'" })
+    expect(gw.calls.map(c => c.method)).not.toContain("plugins.manage")
     await until(t, () => t.frame().includes("enabled"))
     t.destroy()
   })

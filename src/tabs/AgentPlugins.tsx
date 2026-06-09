@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useGateway } from "../context/gateway"
-import { type AgentPlugin, type PluginsManageListRequest, type PluginsManageListResponse, type PluginsManageToggleRequest, type PluginsManageToggleResponse } from "../context/wire"
+import { type AgentPlugin, listAgentPlugins, toggleAgentPlugin } from "../agentPlugins"
 import { useListKeys, useFollow } from "../keys"
 import { useTheme } from "../theme"
 import { useDialog } from "../ui/dialog"
@@ -13,7 +13,7 @@ import { Col, Hdr, VBAR } from "../ui/table"
 type Section = { source: string; items: AgentPlugin[] }
 
 const enabled = (p: AgentPlugin) => p.status === "enabled"
-const canToggle = (p: AgentPlugin) => p.status === "enabled" || p.status === "disabled" || p.status === "not-enabled"
+const canToggle = (p: AgentPlugin) => p.status === "enabled" || p.status === "disabled" || p.status === "not enabled"
 const statusLabel = (p: AgentPlugin) => p.status || "unknown"
 
 const group = (list: AgentPlugin[]): Section[] => {
@@ -34,7 +34,7 @@ const rank = (source: string) =>
 
 const statusFg = (theme: ReturnType<typeof useTheme>["theme"], p: AgentPlugin) =>
   enabled(p) ? theme.success
-  : p.status === "disabled" || p.status === "not-enabled" ? theme.textMuted
+  : p.status === "disabled" || p.status === "not enabled" ? theme.textMuted
   : theme.warning
 
 const Row = memo((props: {
@@ -112,11 +112,11 @@ export const AgentPlugins = memo((props: { focused?: boolean }) => {
 
   const load = useCallback(() => {
     setLoading(true)
-    gw.request<PluginsManageListResponse>("plugins.manage", { action: "list" } satisfies PluginsManageListRequest)
+    listAgentPlugins(gw)
       .then(r => {
-        setPlugins(r.plugins ?? [])
-        setCounts({ user: r.user_count ?? 0, bundled: r.bundled_count ?? 0 })
-        setSel(s => Math.max(0, Math.min(s, Math.max(0, (r.plugins?.length ?? 1) - 1))))
+        setPlugins(r.plugins)
+        setCounts({ user: r.user_count, bundled: r.bundled_count })
+        setSel(s => Math.max(0, Math.min(s, Math.max(0, r.plugins.length - 1))))
         setErr(null)
       })
       .catch(e => setErr(e instanceof Error ? e.message : String(e)))
@@ -134,10 +134,10 @@ export const AgentPlugins = memo((props: { focused?: boolean }) => {
     }
     const enable = !enabled(p)
     setBusy(p.name)
-    const req = { action: "toggle", name: p.name, enable } satisfies PluginsManageToggleRequest
-    gw.request<PluginsManageToggleResponse>("plugins.manage", req)
+    const req = { action: "toggle", name: p.name, enable } as const
+    toggleAgentPlugin(gw, req)
       .then(plugin => {
-        setPlugins(prev => prev.map(x => x.name === p.name ? plugin : x))
+        setPlugins(prev => prev.map(x => x.name === p.name ? { ...x, ...plugin } : x))
         setErr(null)
         toast.show({
           variant: "success",
