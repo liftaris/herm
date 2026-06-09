@@ -2,6 +2,7 @@ import { memo, useEffect, type ReactNode } from "react"
 import { Config } from "./Config"
 import { Skills } from "./Skills"
 import { Toolsets } from "./Toolsets"
+import { AgentPlugins } from "./AgentPlugins"
 import { Env } from "./Env"
 import { Memory } from "./Memory"
 import { SubTabBar } from "../components/tabs/SubTabBar"
@@ -13,7 +14,7 @@ type Props = {
   setSub: (i: number) => void
 }
 
-// Consolidates Config / Skills / Toolsets / Env / Memory. Order is
+// Consolidates Config / Skills / Toolsets / Env / Memory / Plugins. Order is
 // Config first so a bare click on the top-level tab lands on the most
 // common target; the rest are alphabetical-ish by frequency of use.
 export const ConfigGroup = memo((props: Props) => {
@@ -40,6 +41,9 @@ export const ConfigGroup = memo((props: Props) => {
         </Pane>
         <Pane visible={props.sub === 4}>
           <Memory focused={!!props.focused && props.sub === 4} />
+        </Pane>
+        <Pane visible={props.sub === 5}>
+          <AgentPlugins focused={!!props.focused && props.sub === 5} />
         </Pane>
       </box>
     </box>
