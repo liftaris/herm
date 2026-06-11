@@ -19,10 +19,18 @@ describe("parseLaunch", () => {
     [["--foo", "-c"], { mode: "resume", splash: true }],
     [["--no-splash"], { mode: "new", splash: false }],
     [["--no-splash", "-c"], { mode: "resume", splash: false }],
+    [["--gateway-url", "wss://gateway.test/api/ws?token=abc", "--resume", "sid-1"], {
+      gateway: "wss://gateway.test/api/ws?token=abc", mode: "resume", sid: "sid-1", splash: true,
+    }],
   ]
   for (const [argv, want] of cases) {
     test(JSON.stringify(argv), () => expect(parseLaunch(argv)).toEqual(want))
   }
+
+  test("rejects --gateway-url without a URL", () => {
+    expect(() => parseLaunch(["--gateway-url"])).toThrow("--gateway-url requires a URL")
+    expect(() => parseLaunch(["--gateway-url", "--resume", "sid-1"])).toThrow("--gateway-url requires a URL")
+  })
 })
 
 describe("normalize", () => {

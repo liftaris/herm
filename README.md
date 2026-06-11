@@ -56,6 +56,19 @@ herm       # fresh session
 herm -c    # resume last session
 ```
 
+Attach to an already-running Hermes dashboard instead of spawning a local
+gateway subprocess:
+
+```bash
+herm --gateway-url http://127.0.0.1:9119/
+```
+
+Dashboard origins are normalized to the websocket endpoint automatically, so
+`http://.../` becomes `ws://.../api/ws` and `https://.../` becomes
+`wss://.../api/ws`. If the URL has no `token` query parameter, Herm fetches the
+dashboard root and uses its embedded session token. For persistent configuration,
+set `HERM_GATEWAY_URL` or the upstream-compatible `HERMES_TUI_GATEWAY_URL`.
+
 Or run from source:
 
 ```bash

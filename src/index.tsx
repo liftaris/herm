@@ -39,6 +39,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
   process.exit(0)
 }
 const launch = parseLaunch(argv)
+if (launch.gateway) process.env.HERM_GATEWAY_URL = launch.gateway
 
 // Initialize and render
 const main = async () => {

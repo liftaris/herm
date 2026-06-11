@@ -19,25 +19,37 @@ const pkgVersion = (d: string, up = 4): string => {
 export const VERSION = pkgVersion(import.meta.dirname)
 
 export type Launch =
-  | { mode: "new"; splash?: boolean }
-  | { mode: "resume"; sid?: string; splash?: boolean }
+  | { gateway?: string; mode: "new"; splash?: boolean }
+  | { gateway?: string; mode: "resume"; sid?: string; splash?: boolean }
 
 /** Parse process argv (everything after the script path). No deps. */
 export function parseLaunch(argv: readonly string[]): Launch {
   let splash = true
+  let mode: "new" | "resume" = "new"
+  let sid: string | undefined
+  let gateway: string | undefined
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--no-splash") { splash = false; continue }
-    if (a === "-c" || a === "--continue") return { mode: "resume", splash }
+    if (a === "--gateway-url") {
+      const next = argv[i + 1]
+      if (!next || next.startsWith("-")) throw new Error("--gateway-url requires a URL")
+      gateway = next
+      i++
+      continue
+    }
+    if (a === "-c" || a === "--continue") { mode = "resume"; continue }
     if (a === "--resume") {
       const next = argv[i + 1]
+      mode = "resume"
       // Treat a following non-flag token as the session id.
-      return next && !next.startsWith("-")
-        ? { mode: "resume", sid: next, splash }
-        : { mode: "resume", splash }
+      if (next && !next.startsWith("-")) { sid = next; i++ }
+      continue
     }
   }
-  return { mode: "new", splash }
+
+  return mode === "resume" ? { gateway, mode, sid, splash } : { gateway, mode, splash }
 }
 
 export const HELP = `\
@@ -47,6 +59,7 @@ Usage:
   herm                    start a fresh session
   herm -c, --continue     resume the last real TUI session
   herm --resume [id]      resume last (or the given) session
+  herm --gateway-url URL   connect to remote tui_gateway WebSocket
   herm --no-splash        skip the launch splash
   herm -v, --version      print version
   herm -h, --help         show this help
