@@ -63,16 +63,15 @@ export function useGitBranch(cwd: string | undefined): string | null {
 export const rtrunc = (s: string, max: number) =>
   s.length <= max ? s : "…" + s.slice(-(max - 1))
 
-/** Parsed `git status --porcelain` entry. */
 export type File = { file: string; code: string }
-
-/** Parsed working-tree status for cwd, or null when not in a repo. */
-export async function status(cwd: string): Promise<{
+export type Status = {
   files: File[]
   added: number
   modified: number
   deleted: number
-} | null> {
+}
+
+export async function status(cwd: string): Promise<Status | null> {
   const out = await git(cwd, "status", "--porcelain")
   if (!out) return null
   const files = out.split("\n").filter(Boolean).map(line => ({
@@ -93,33 +92,31 @@ export async function status(cwd: string): Promise<{
   return { files, added, modified, deleted }
 }
 
-/** Reactive hook: re-reads `git status` when .git/index changes. */
-export function useGitStatus(cwd: string | undefined): {
-  files: File[]
-  added: number
-  modified: number
-  deleted: number
-} | null {
-  const [val, set] = useState<{
-    files: File[]; added: number; modified: number; deleted: number
-  } | null>(null)
+const same = (a: Status | null, b: Status | null) =>
+  a === b || Boolean(a && b
+    && a.added === b.added
+    && a.modified === b.modified
+    && a.deleted === b.deleted
+    && a.files.length === b.files.length
+    && a.files.every((file, i) => file.code === b.files[i]?.code && file.file === b.files[i]?.file))
+
+export function useGitStatus(cwd: string | undefined, delay = 2000): Status | null {
+  const [val, set] = useState<Status | null>(null)
 
   useEffect(() => {
     if (!cwd) { set(null); return }
     let dead = false
-    let w: FSWatcher | undefined
-    const read = () => status(cwd).then(s => { if (!dead) set(s) })
+    let seq = 0
+    const read = () => {
+      const id = ++seq
+      void status(cwd).then(s => {
+        if (!dead && id === seq) set(old => same(old, s) ? old : s)
+      })
+    }
     void read()
-    gitdir(cwd).then(dir => {
-      if (dead || !dir) return
-      try {
-        w = watch(dir, { persistent: false }, (_ev, f) => {
-          if (f === "index") void read()
-        })
-      } catch { /* unwatchable fs */ }
-    })
-    return () => { dead = true; w?.close() }
-  }, [cwd])
+    const timer = setInterval(read, Math.max(250, delay))
+    return () => { dead = true; clearInterval(timer) }
+  }, [cwd, delay])
 
   return val
 }

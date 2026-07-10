@@ -99,9 +99,7 @@ const Row = (props: { label: string; value: string; strong?: boolean; block?: bo
   )
 }
 
-/** Dialog overlay for the changed-files list — opens on click from the
- *  sidebar Changes row. Esc or backdrop click dismisses. */
-const ChangesDialog = memo((props: { files: git.File[]; onClose: () => void }) => {
+const ChangesDialog = memo((props: { files: git.File[] }) => {
   const theme = useTheme().theme
 
   return (
@@ -155,15 +153,16 @@ export const Sidebar = memo((props: {
   const ref = useRef(changes)
   ref.current = changes
 
-  useKeyboard((key) => {
+  const show = () => {
     const cur = ref.current
-    if (!cur || cur.files.length === 0) return
-    if (keys.match("sidebar.changes", key)) {
-      key.stopPropagation()
-      dialog.replace(
-        <ChangesDialog files={cur.files} onClose={() => dialog.clear()} />
-      )
-    }
+    if (!cur || cur.files.length === 0 || dialog.open()) return
+    dialog.replace(<ChangesDialog files={cur.files} />)
+  }
+
+  useKeyboard((key) => {
+    if (dialog.open() || !keys.match("sidebar.changes", key)) return
+    key.stopPropagation()
+    show()
   })
 
   return (
@@ -198,10 +197,7 @@ export const Sidebar = memo((props: {
         {branch ? <Row label="Branch" value={git.rtrunc(branch, INNER - PAD_L - 2)} /> : null}
 
         {changes && (changes.added + changes.modified + changes.deleted) > 0 ? (
-          <box height={1}
-               onMouseDown={() => dialog.replace(
-                 <ChangesDialog files={changes.files} onClose={() => dialog.clear()} />
-               )}>
+          <box height={1} onMouseDown={show}>
             <text>
               <span fg={theme.textMuted}>{"▸ "}</span>
               <span fg={theme.text}><strong>Changes</strong></span>
