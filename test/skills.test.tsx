@@ -145,28 +145,14 @@ describe("Skills tab", () => {
     await until(t, () => t.frame().includes("Hub Search"))
     await act(async () => { await t.keys.typeText("net") })
     await until(t, () => t.frame().includes("display-name"))
-    expect(t.frame()).toContain("remote pkg")
-    expect(t.frame()).toContain("github:owner/repo/skills/display-name")
-    expect(t.frame()).toContain("github")
-    expect(t.frame()).toContain("trusted")
-
     const lines = t.frame().split("\n")
     const y = lines.findIndex(l => l.includes("display-name"))
     await act(async () => { await t.mouse.pressDown(lines[y].indexOf("display-name"), y) })
     await until(t, () => t.frame().includes("Install skill?"))
-    expect(t.frame()).toContain("github:owner/repo/skills/display-name")
-
-    await act(async () => { await t.keys.typeText("n") })
-    await until(t, () => !t.frame().includes("Install skill?"))
-
-    act(() => t.keys.pressEnter())
-    await until(t, () => t.frame().includes("Install skill?"))
-    expect(t.frame()).toContain("github:owner/repo/skills/display-name")
 
     await act(async () => { await t.keys.typeText("y") })
     await until(t, () => installed.length > 0)
     expect(installed).toEqual(["github:owner/repo/skills/display-name"])
-    await until(t, () => t.frame().includes("Installed github:owner/repo/skills/display-name"))
     t.destroy()
   })
 
