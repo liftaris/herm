@@ -3,28 +3,27 @@ import { Profiler, useState, useEffect, useRef, useCallback, useMemo, useReducer
 import * as perf from "./utils/perf"
 import { hasInterp, interpolate } from "./utils/interpolate"
 import { GatewayProvider, useGateway, useGatewayRestart, type Gateway } from "./context/gateway"
-import type { SessionInfo, TranscriptMessage, ImageAttachResponse } from "./context/wire"
+import type { SessionInfo, ImageAttachResponse } from "./context/wire"
 import type { Message, Usage } from "./types/message"
 import { text as msgText } from "./types/message"
 import { CLOUD_MIN } from "./components/chat/ThoughtCloud"
 import type { AvatarState } from "./components/avatar/states"
 import { TabBar } from "./components/tabs/TabBar"
-import { Sidebar } from "./components/sidebar/Sidebar"
+import { Sidebar, hidden as hiddenSidebar } from "./components/sidebar/Sidebar"
 import { Chat } from "./tabs/Chat"
 import { SessionsGroup } from "./tabs/SessionsGroup"
 import { Automation } from "./tabs/Automation"
 import { ConfigGroup } from "./tabs/ConfigGroup"
 import { EikonGroup } from "./tabs/EikonGroup"
-import { copySelection, copy as clipCopy } from "./utils/clipboard"
+import { copySelection, copyText as clipCopy } from "./utils/clipboard"
 import { ThemeProvider, useTheme } from "./theme"
-import { DialogProvider, useDialog } from "./ui/dialog"
+import { DialogProvider, useDialog, useDialogOpen } from "./ui/dialog"
 import { ToastProvider, useToast } from "./ui/toast"
 import { CommandProvider } from "./ui/command"
 import { KeysProvider } from "./keys"
 import { Splash } from "./ui/Splash"
 import { lastReal } from "./service/sessions-db"
 import { readChangelog } from "./service/hermes-home"
-import { openMessage } from "./dialogs/message"
 import { openTextPrompt } from "./dialogs/text-prompt"
 import { parseEikonFile, type ParsedEikon } from "./components/avatar/eikon"
 import { bundledEikonPath } from "./components/avatar/bundled"
@@ -38,7 +37,7 @@ import { useBridge } from "./app/bridge"
 import * as control from "./app/control"
 import { Composer, type ComposerHandle } from "./components/chat/Composer"
 import * as preferences from "./context/preferences"
-import { turnReducer, initialTurn, transcriptToMessages } from "./app/turnReducer"
+import { turnReducer, initialTurn } from "./app/turnReducer"
 import { useSession } from "./app/useSession"
 import { SkinProvider, deriveSkin, type SkinState } from "./context/skin"
 import { useAppKeys } from "./app/useAppKeys"
@@ -55,8 +54,17 @@ import { BackgroundProvider } from "./app/background"
 import { useVoice } from "./voice/useVoice"
 import { VoiceIndicator } from "./voice/Indicator"
 import { sessionCapabilities } from "./app/sessionCapabilities"
+import { useGitBranch } from "./utils/git"
+import type { HermPlugin } from "./plugins/types"
+import { useMessageActions } from "./app/useMessageActions"
 
-type AppProps = { initialTheme?: string; gateway?: Gateway; launch?: Launch; keyOverrides?: Record<string, string> }
+type AppProps = {
+  initialTheme?: string
+  gateway?: Gateway
+  launch?: Launch
+  keyOverrides?: Record<string, string>
+  plugins?: ReadonlyArray<HermPlugin>
+}
 
 const BUSY_RE = /session busy|waiting for model response/i
 
@@ -67,7 +75,7 @@ export const App = (props: AppProps) => (
         <KeysProvider overrides={props.keyOverrides}>
           <DialogProvider>
             <CommandProvider>
-              <PluginProvider>
+              <PluginProvider plugins={props.plugins}>
                 <BackgroundProvider>
                   <AppInner launch={props.launch ?? { mode: "new" }} />
                 </BackgroundProvider>
@@ -84,6 +92,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const gw = useGateway()
   const gwRestart = useGatewayRestart()
   const dialog = useDialog()
+  const dialogOpen = useDialogOpen()
   const themeCtx = useTheme()
   const toast = useToast()
   const renderer = useRenderer()
@@ -96,7 +105,10 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [ready, setReady] = useState(false)
   const [sid, setSid] = useState("")
   const sidRef = useRef(sid); sidRef.current = sid
-  const capabilities = sessionCapabilities({ sid, ready, streaming: turn.streaming })
+  const [starting, setStarting] = useState(false)
+  const startRef = useRef(starting); startRef.current = starting
+  const active = turn.streaming || starting
+  const capabilities = sessionCapabilities({ sid, ready, streaming: active })
   const [tab, setTab] = useState(CHAT_TAB)
   // Sub-tab per group — Chat has none, so key 0 is unused.
   // Defensive clamp lives inside each group (SessionsGroup/Automation/
@@ -183,6 +195,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [splash, setSplash] = useState(launch.splash !== false)
   const [switching, setSwitching] = useState(false)
   const summoned = useRef(false)
+  const creating = useRef(false)
   const [composing, setComposing] = useState(false)
   const splashLast = useMemo(
     () => launch.mode === "new" ? lastReal() : undefined,
@@ -204,7 +217,13 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [skin, setSkin] = useState<SkinState>(() => deriveSkin(undefined))
   const inflight = useRef(false)
   const hold = useRef(false)
+  const pending = useRef(false)
   const [pulse, setPulse] = useState(0)
+  const start = useCallback(() => {
+    inflight.current = false
+    pending.current = false
+    setPulse(n => n + 1)
+  }, [])
   const settle = useCallback(() => {
     if (!hold.current) return
     hold.current = false
@@ -243,11 +262,38 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   // emits "exit" → errorPulse via the listener below.
   const [errorPulse, setErrorPulse] = useState(false)
 
+  useEffect(() => {
+    const restart = (mode: "resume" | "new" = "resume") => {
+      const sid = sidRef.current
+      if (mode === "resume" && sid) launchRef.current = { mode: "resume", sid, splash: false }
+      gw.setSession("")
+      setReady(false)
+      setStarting(false)
+      setStatus("gateway restarting")
+      voice.reset()
+    }
+    const exit = (code: number | null) => {
+      const text = `gateway exited${code === null ? "" : ` (${code})`}`
+      const sid = sidRef.current
+      if (sid) launchRef.current = { mode: "resume", sid, splash: false }
+      gw.setSession("")
+      setReady(false)
+      setStarting(false)
+      setStatus(text)
+      setErrorPulse(true)
+      voice.reset()
+      dispatch({ kind: "system", text })
+    }
+    gw.on("restart", restart)
+    gw.on("exit", exit)
+    return () => { gw.off("restart", restart); gw.off("exit", exit) }
+  }, [gw])
+
   const agentState: AvatarState = errorPulse
     ? "error"
     : turn.toolActive ? "working"
     : turn.streaming && turn.hasContent ? "speaking"
-    : turn.streaming ? "thinking"
+    : active ? "thinking"
     : composing ? "listening"
     : "idle"
 
@@ -334,46 +380,72 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
-    setSid, setInfo, setReady, setTitle, setBusy, setUsage, setStatus, setSkin, setErrorPulse, settle,
+    setSid, setInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
+    onVoiceStatus: state => {
+      voice.setRecording(state === "listening" || state === "recording")
+      voice.setProcessing(state === "transcribing" || state === "processing")
+    },
+    onVoiceTranscript: (text, noSpeechLimit) => {
+      voice.setRecording(false)
+      voice.setProcessing(false)
+      if (noSpeechLimit) {
+        voice.setEnabled(false)
+        sys("voice: disabled after repeated silence")
+        return
+      }
+      voice.onTranscript?.(text)
+    },
+    start,
   })
-  intr.current = stream.doInterrupt
+  const interrupt = useCallback(() => {
+    if (startRef.current && !turnRef.current.streaming) hold.current = true
+    stream.doInterrupt()
+  }, [stream.doInterrupt])
+  intr.current = interrupt
 
   const reset = useCallback(() => {
     stream.interrupted.current = false
     hold.current = false
+    pending.current = false
     toast.clear("credits.depleted")
     undone.current = []
     dispatch({ kind: "reset" })
     setUsage(undefined)
     setReady(false)
+    setStarting(false)
     setStatus("")
     setTitle("")
     setAttachments([])
   }, [toast])
 
   const newSession = useCallback(async () => {
+    if (creating.current) return
+    creating.current = true
+    setSwitching(true)
     const prev = sidRef.current
-    reset()
     summoned.current = true
     setSplash(true)
-    // Clear the gateway's active sid before session.create lands so
-    // any event emitted in the window between here and setSession(new)
-    // isn't auto-attributed to the outgoing session (stale-sid race).
-    // Mirrors switchProfile. session.close below passes prev
-    // explicitly, so it isn't affected by the clear.
+    setReady(false)
     gw.setSession("")
-    setSid("")
-    // Close the outgoing session unless it owns a durable background process.
-    // Older gateways kill terminal(background=true) children as part of
-    // session.close; preserving the live session is safer than SIGTERM'ing a
-    // watcher while /new creates the next conversation.
-    if (prev) void session.close(prev, { preserveBackground: true })
     try {
       const r = await session.create()
+      reset()
       setSid(r.id)
       if (r.info) { setInfo(r.info); setUsage(r.info.usage) }
+      setReady(true)
+      setStarting(false)
+      setStatus("")
       sessionStart.current = Date.now()
-    } catch {}
+      if (prev) void session.close(prev, { preserveBackground: true })
+    } catch (err) {
+      if (prev) { gw.setSession(prev); setReady(true) }
+      setSplash(false)
+      summoned.current = false
+      dispatch({ kind: "system", text: `Failed to create session: ${err instanceof Error ? err.message : String(err)}` })
+    } finally {
+      creating.current = false
+      setSwitching(false)
+    }
   }, [reset, session, gw])
 
   const switchSession = useCallback(async (target: string) => {
@@ -449,6 +521,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setSplash(false)
       summoned.current = false
       if (prev && prev !== res.id) toast.show({ variant: "info", message: "switched live session" })
+      return true
     } catch (err) {
       if (prev) {
         gw.setSession(prev)
@@ -458,6 +531,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       dispatch({ kind: "system", text: `Failed to activate: ${err instanceof Error ? err.message : String(err)}` })
       setSplash(false)
       summoned.current = false
+      return false
     } finally {
       setSwitching(false)
     }
@@ -468,6 +542,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   // tabs. The session is NOT preserved — it belongs to the old
   // profile's state.db. Confirm step lives in the Agents tab.
   const switchProfile = useCallback((newHome: string, name: string) => {
+    voice.reset()
     rehome(newHome)
     reset()
     gw.setSession("")
@@ -483,7 +558,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     launchRef.current = { mode: "new", splash: true }
     toast.show({ variant: "info", message: `Switching to '${name}'…` })
     goToTab(CHAT_TAB)
-    gwRestart()
+    gwRestart("new")
   }, [reset, goToTab, gwRestart, toast, gw])
 
   const loadEikon = useCallback((path: string) => {
@@ -504,52 +579,12 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     if (p) loadEikon(p); else setEikon(undefined)
   }, [eikonName, eikonRev, skin.skin?.name, loadEikon])
 
-  // turnsFrom counts user turns at-or-after m — each session.undo pops
-  // one user+assistant pair server-side. Reads turnRef (not turn) so
-  // rewind/fork/msgMenu stay identity-stable across streaming deltas;
-  // they gate on turnRef.current.streaming at call time instead.
-  const turnsFrom = (m: Message) => {
-    const msgs = turnRef.current.messages
-    const at = msgs.findIndex(x => x.id === m.id)
-    return at < 0 ? 0 : msgs.slice(at).filter(x => x.role === "user").length
-  }
-
-  const rewind = useCallback(async (m: Message) => {
-    if (turnRef.current.streaming) return
-    const n = turnsFrom(m)
-    if (n === 0) return
-    const text = m.parts.filter(p => p.type === "text").map(p => p.content).join("")
-    for (let i = 0; i < n; i++) await gw.request("session.undo").catch(() => {})
-    const r = await gw.request<{ messages: TranscriptMessage[] }>("session.history").catch(() => null)
-    const msgs = turnRef.current.messages
-    const at = msgs.findIndex(x => x.id === m.id)
-    dispatch({ kind: "load", messages: r ? transcriptToMessages(r.messages ?? []) : msgs.slice(0, at) })
-    composer.current?.set(text)
-    setFocusRegion("input")
-  }, [gw])
-
-  // Non-destructive: session.branch clones full history into a new
-  // gateway session; undo N turns *in that session* to land at m;
-  // then activate the returned live session id. Original session is untouched.
-  const fork = useCallback(async (m: Message) => {
-    if (turnRef.current.streaming) return
-    const n = turnsFrom(m)
-    const text = m.parts.filter(p => p.type === "text").map(p => p.content).join("")
-    const res = await gw.request<{ session_id: string; title?: string }>("session.branch", {})
-      .catch((e: Error) => { toast.show({ variant: "error", message: `branch failed: ${e.message}` }); return null })
-    if (!res?.session_id) return
-    for (let i = 0; i < n; i++)
-      await gw.request("session.undo", { session_id: res.session_id }).catch(() => {})
-    await activateSession(res.session_id)
-    composer.current?.set(text)
-    setFocusRegion("input")
-    toast.show({ variant: "success", message: `forked → ${res.title ?? res.session_id}` })
-  }, [gw, toast, activateSession])
-
-  const msgMenu = useCallback((m: Message) => {
-    if (turnRef.current.streaming) return
-    openMessage(dialog, m, { rewind, fork })
-  }, [dialog, rewind, fork])
+  const messageActions = useMessageActions({
+    gw, dialog, toast, session, activate: activateSession,
+    composer, turn: turnRef, dispatch, focus: setFocusRegion,
+  })
+  const rewind = messageActions.rewind
+  const msgMenu = messageActions.menu
   // Gateway owns the canonical list (session["attached_images"]); chips
   // are a client-side mirror. prompt.submit drains server-side, so clear
   // here too. No image.detach RPC yet — chips are display-only.
@@ -572,6 +607,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     newSession, switchSession, activateSession, rewind, goTo, attachClipboard, voiceToggle: voice.toggle,
   })
   const send = useCallback(async (raw: string) => {
+    if (creating.current) return
     // Bare exit/quit/:q — pass through as literals so a
     // reflex `exit⏎` works without the leading slash.
     if (["exit", "quit", ":q", ":q!", ":wq"].includes(raw.trim()))
@@ -616,9 +652,20 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     const withMedia = attachments.length
       ? [...attachments.flatMap(a => a.path ? [`MEDIA:${a.path}`] : []), text].filter(Boolean).join("\n")
       : text
-    gw.request("prompt.submit", { text })
-      .then(() => {
+    if (pending.current) {
+      setQueue(q => [...q, raw])
+      setStatus("queued for next turn")
+      return
+    }
+    pending.current = true
+    setPulse(n => n + 1)
+    gw.request<{ status?: string }>("prompt.submit", { text })
+      .then(r => {
         dispatch({ kind: "user", text: withMedia })
+        if (r.status === "streaming" && !turnRef.current.streaming) {
+          setStarting(true)
+          setStatus("starting agent…")
+        }
         setAttachments([])
         undone.current = []
         setTab(CHAT_TAB)
@@ -626,6 +673,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       .catch((e: Error) => {
         const msg = e instanceof Error ? e.message : String(e)
         if (BUSY_RE.test(msg)) {
+          pending.current = false
+          setPulse(n => n + 1)
           inflight.current = true
           setQueue(q => [text, ...q])
           setStatus("queued for next turn")
@@ -636,7 +685,10 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
           }, 400)
           return
         }
+        pending.current = false
+        setPulse(n => n + 1)
         inflight.current = false
+        setStarting(false)
         dispatch({ kind: "system", text: `submit failed: ${msg}` })
         toast.show({ variant: "error", message: msg })
       })
@@ -680,10 +732,10 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   // `queue`; on idle the head auto-submits. turnReducer doesn't flip
   // `streaming` until the gateway emits message.start (async), so a
   // naive effect would fire repeatedly and drain the whole queue in
-  // one tick. `inflight` bridges the dispatch→message.start gap.
-  useEffect(() => { if (turn.streaming) inflight.current = false }, [turn.streaming])
+  // one tick. `pending`/`inflight` bridge the submit→message.start gap.
+  useEffect(() => { if (turn.streaming) start() }, [turn.streaming, start])
   useEffect(() => {
-    if (!capabilities.canDrainQueue || inflight.current || hold.current || queue.length === 0) return
+    if (!capabilities.canDrainQueue || inflight.current || hold.current || pending.current || queue.length === 0) return
     const [head, ...rest] = queue
     inflight.current = true
     setQueue(rest)
@@ -706,12 +758,25 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     () => [...TABS, ...extra.map(r => ({ name: r.name, description: r.description ?? "Plugin" }))],
     [extra],
   )
+  const routeName = useRef<string | undefined>(undefined)
+  const routesRef = useRef(extra)
   const tabMax = all.length - 1
   // Late-bind the plugin router to this shell's tab navigator so
   // `api.route.navigate(name)` can drive `goTo`. `bind` is idempotent.
   useEffect(() => {
     plugins.bind(goTo, () => all[tab]?.name)
   }, [plugins, goTo, all, tab])
+  useEffect(() => {
+    const changed = routesRef.current !== extra
+    routesRef.current = extra
+    if (changed && tab >= TABS.length) {
+      const next = extra.findIndex(route => route.name === routeName.current)
+      if (next < 0) { goToTab(CHAT_TAB); return }
+      const index = TABS.length + next
+      if (index !== tab) { goToTab(index); return }
+    }
+    routeName.current = all[tab]?.name
+  }, [extra, all, tab, goToTab])
   const subCount = SUB_TABS[tab]?.length ?? 0
   const cycleSub = useCallback((dir: -1 | 1) => {
     const labels = SUB_TABS[tab]
@@ -727,6 +792,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     subCount, cycleSub,
     focusRegion, setFocusRegion,
     streaming: turn.streaming,
+    starting,
     dialogOpen: dialog.open,
     composer,
     // Route keys to the pending inline prompt card before anything
@@ -740,13 +806,13 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setSplash(false); summoned.current = false
       return true
     },
-    onInterrupt: stream.doInterrupt,
+    onInterrupt: interrupt,
     // queue.flush interrupts, then drain waits for session.info so
     // prompt.submit does not race the gateway's still-running turn.
     queued: queue.length,
     onFlushQueue: () => {
       hold.current = true
-      stream.doInterrupt()
+      interrupt()
     },
     onQuit: () => quit(renderer, sid, caption, gw),
     onQuitArm: (label) =>
@@ -758,8 +824,9 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     onCopyLast: () => {
       const m = [...turnRef.current.messages].reverse()
         .find(x => x.role === "assistant" && msgText(x))
-      if (m) void clipCopy(msgText(m))
+      if (m) void clipCopy(msgText(m), toast)
     },
+    onCopyToast: toast.show,
     onAttachClipboard: attachClipboard,
     // Client-side drop only. Gateway's session["attached_images"] still
     // has the orphaned path until the next prompt.submit drains it, or
@@ -789,11 +856,11 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     onVoiceRecord: () => voice.record(sidRef.current),
   })
   useBridge({
-    tab, ready, streaming: turn.streaming, messages: turn.messages, sid, focusRegion,
+    tab, ready, streaming: active, messages: turn.messages, sid, focusRegion,
     setTab, setFocusRegion, dispatch, composer,
   })
 
-  const contentFocused = focusRegion === "content" && !turn.streaming
+  const contentFocused = focusRegion === "content" && !active && !dialogOpen
   // At most one pending prompt (gateway blocks on the answer). The
   // card mounts inside MessageList; key routing and composer-defocus
   // live here because the shell owns both. `prompt` is computed above
@@ -810,9 +877,9 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     const inner = (() => {
       switch (tab) {
         case CHAT_TAB: return <Chat messages={turn.messages} streaming={turn.streaming}
-                                    prompt={promptWire}
-                                    cloud={cloud} cloudH={cloudH} pick={pick}
-                                    onResize={setCloudH} onPick={onPick} onClose={closeCloud} onRewind={msgMenu} />
+                               prompt={promptWire}
+                               cloud={cloud} cloudH={cloudH} pick={pick}
+                               onResize={setCloudH} onPick={onPick} onClose={closeCloud} onRewind={msgMenu} />
         case SESSIONS_TAB: return <SessionsGroup focused={contentFocused}
                                                  sub={subTabs[SESSIONS_TAB] ?? 0}
                                                  setSub={sessSub}
@@ -835,7 +902,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
                                            setSub={eikSub} />
         default: {
           const r = extra[tab - TABS.length]
-          return r ? r.render() : null
+          return r ? r.render({ focused: contentFocused }) : null
         }
       }
     })()
@@ -844,14 +911,18 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   }
 
   const theme = themeCtx.theme
-  const onMouseUp = useCallback(() => copySelection(renderer), [renderer])
+  const onMouseUp = useCallback(() => copySelection(renderer, toast), [renderer, toast])
   // Composer defocuses while any prompt is pending. Approval/clarify
   // list-mode don't need input, and this guarantees the textarea's
   // `focused` prop flips false→true on answer so OpenTUI refocuses it
   // (a card's own <input focused> would otherwise leave it blurred).
   // Keys still reach the card via onPromptKey on the global bus.
-  const inputFocused = focusRegion === "input" && !prompt
+  const inputFocused = focusRegion === "input" && !prompt && !dialogOpen
   const sidebarVisible = dims.width >= (tab === CHAT_TAB ? 120 : 140) && !hideSidebar
+  const branch = useGitBranch(info?.cwd)
+  const hidden = !sidebarVisible ? hiddenSidebar({
+    info, usage, profile: activeProfileName(), title: caption, branch,
+  }) : undefined
 
   return (
     <Profiler id="shell" onRender={perf.onRender}>
@@ -877,9 +948,12 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
               <VoiceIndicator voice={voice.state} keyLabel={voice.keyLabel} />
               <Composer
                 ref={composer}
-                focused={inputFocused} canSubmitPrompt={capabilities.canSubmitPrompt} ready={ready} streaming={turn.streaming}
+                focused={inputFocused} canSubmitPrompt={capabilities.canSubmitPrompt} ready={ready} streaming={active || pending.current}
+                starting={starting}
                 status={status}
                 model={info?.model}
+                subagents={usage?.active_subagents ?? info?.usage?.active_subagents}
+                hidden={hidden}
                 escHint={escHint}
                 queue={queue}
                 attachments={attachments}
@@ -898,7 +972,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
             <Profiler id="sidebar" onRender={perf.onRender}>
               <Sidebar agentState={agentState} info={info} usage={usage} eikon={eikon} profile={activeProfileName()}
                        title={caption}
-                       cloud={tab === 0 && cloud} pulse={turn.streaming}
+                       cloud={tab === 0 && cloud} pulse={active}
                        onAvatar={onAvatar} onAvatarHold={onAvatarHold} />
             </Profiler>
           ) : null}
@@ -906,7 +980,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
         {plugins.has("app_bottom") ? (
           <box height={1} flexShrink={0} paddingX={1} overflow="hidden">
             <plugins.Slot name="app_bottom" mode="single_winner"
-                          sid={sid} tab={tab} streaming={turn.streaming} />
+                          sid={sid} tab={tab} streaming={active} />
           </box>
         ) : null}
       </box>

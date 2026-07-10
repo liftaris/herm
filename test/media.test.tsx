@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { act } from "react"
 import { mountNode, until } from "./harness"
 import { splitContent, classify, MEDIA_LINE_RE } from "../src/components/chat/MediaChip"
+import { previewStrategy } from "../src/utils/terminal-image"
 import { MessageItem } from "../src/components/chat/MessageItem"
 import type { Message } from "../src/types/message"
 
@@ -34,6 +35,14 @@ describe("MediaChip > splitContent", () => {
     expect(s).toEqual([
       { code: "MEDIA:/tmp/x.png", lang: "sh" },
       { media: "/tmp/y.png" },
+    ])
+  })
+
+  test("extracts remote markdown images as chip media", () => {
+    expect(splitContent("see ![alt](https://x.test/a.png) now")).toEqual([
+      { md: "see " },
+      { media: "https://x.test/a.png" },
+      { md: " now" },
     ])
   })
 
@@ -88,6 +97,13 @@ describe("MediaChip > classify", () => {
 })
 
 describe("MessageItem > media rendering", () => {
+  test("transcript images use the shared preview strategy", () => {
+    expect(previewStrategy({ path: "/tmp/screenshot.png", exists: true, chafa: false })).toEqual({
+      kind: "chip",
+      reason: "no-renderer",
+    })
+  })
+
   const msg = (content: string): Message => ({
     id: "a1", role: "assistant", timestamp: 0, model: "test",
     parts: [{ type: "text", content, streaming: false }],

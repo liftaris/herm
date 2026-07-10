@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "fs"
 import { filter, matchSub, resolve, sort, LOCAL_COMMANDS, LOCAL_NAMES, type SlashCommand } from "../src/app/slashCommands"
+import { replaceSlashToken, slashTokenAt } from "../src/app/useSlashPopover"
 
 const cmd = (over: Partial<SlashCommand>): SlashCommand => ({
   name: "x", description: "", category: "Session", aliases: [], argsHint: "",
@@ -60,6 +61,22 @@ describe("slash", () => {
                      "quit", "copy", "paste", "image", "background", "voice",
                      "mouse", "redraw", "save", "browser"])
       expect(LOCAL_NAMES.has(n)).toBe(true)
+  })
+
+  test("slashTokenAt finds command tokens under cursor and rejects paths", () => {
+    expect(slashTokenAt("please /cl now", 9)).toEqual({ text: "/cl", query: "cl", start: 7, end: 10, whole: false })
+    expect(slashTokenAt("line one\ntry /new later", 16)).toEqual({ text: "/new", query: "new", start: 13, end: 17, whole: false })
+    expect(slashTokenAt("/clear")).toEqual({ text: "/clear", query: "clear", start: 0, end: 6, whole: true })
+    expect(slashTokenAt("/voice o")).toEqual({ text: "/voice o", query: "voice o", start: 0, end: 8, whole: true })
+    expect(slashTokenAt("/tmp/file")).toBeNull()
+    expect(slashTokenAt("https://host/path")).toBeNull()
+    expect(slashTokenAt("see [label](/clear)")).toBeNull()
+    expect(slashTokenAt("see [/clear]")).toBeNull()
+  })
+
+  test("replaceSlashToken preserves prefix and suffix", () => {
+    const spot = slashTokenAt("please /cl now", 9)!
+    expect(replaceSlashToken("please /cl now", spot, cmd({ name: "clear" }))).toBe("please /clear now")
   })
 
   describe("resolve", () => {

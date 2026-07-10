@@ -16,7 +16,7 @@ import {
   memo, useRef, useState, forwardRef, useImperativeHandle,
 } from "react"
 import { LEFT_BAR } from "../../ui/borders"
-import type { ParsedKey, SubmitEvent } from "@opentui/core"
+import type { ParsedKey } from "@opentui/core"
 import { useTheme } from "../../theme"
 import { useGateway } from "../../context/gateway"
 import { mkApproval, remember } from "../../context/approval-memory"
@@ -101,9 +101,16 @@ const Approval = forwardRef<PromptCardHandle, {
   const send = (c: Choice) => {
     if (done.current) return
     done.current = true
-    if (c === "never") remember(prompt)
-    void gw.request("approval.respond", { choice: RESPOND[c] }).catch(() => {})
-    p.onAnswer(LABELS[c], c !== "deny")
+    setNote("")
+    void gw.request("approval.respond", { choice: RESPOND[c] })
+      .then(() => {
+        if (c === "never") remember(prompt)
+        p.onAnswer(LABELS[c], c !== "deny")
+      })
+      .catch((e: Error) => {
+        done.current = false
+        setNote(e.message)
+      })
   }
 
   const steer = (text: string) => {
@@ -169,7 +176,7 @@ const Approval = forwardRef<PromptCardHandle, {
             <text fg={theme.textMuted}>{"> "}</text>
             <input
               value={custom} onInput={setCustom}
-              onSubmit={(() => steer(custom)) as unknown as (e: SubmitEvent) => void}
+              onSubmit={() => steer(custom)}
               focused flexGrow={1}
               textColor={theme.text}
               backgroundColor={theme.backgroundElement}
@@ -214,15 +221,20 @@ const Clarify = forwardRef<PromptCardHandle, {
   const [sel, setSel] = useState(0)
   const [typing, setTyping] = useState(choices.length === 0)
   const [custom, setCustom] = useState("")
+  const [err, setErr] = useState("")
   const done = useRef(false)
 
   const send = (answer: string) => {
     if (done.current) return
     done.current = true
+    setErr("")
     void gw.request("clarify.respond", {
       request_id: p.req.request_id, answer,
-    }).catch(() => {})
-    p.onAnswer(answer || "(cancelled)", answer !== "")
+    }).then(() => p.onAnswer(answer || "(cancelled)", answer !== ""))
+      .catch((e: Error) => {
+        done.current = false
+        setErr(e.message)
+      })
   }
 
   useImperativeHandle(ref, () => ({
@@ -272,7 +284,7 @@ const Clarify = forwardRef<PromptCardHandle, {
               <text fg={theme.textMuted}>{"> "}</text>
               <input
                 value={custom} onInput={setCustom}
-                onSubmit={(() => send(custom)) as unknown as (e: SubmitEvent) => void}
+                onSubmit={() => send(custom)}
                 focused flexGrow={1}
                 textColor={theme.text}
                 backgroundColor={theme.backgroundElement}
@@ -295,6 +307,7 @@ const Clarify = forwardRef<PromptCardHandle, {
             <text fg={theme.textMuted}>↑/↓ · Enter · 1-{choices.length} · Esc cancel</text>
           </>
         )}
+        {err ? <text fg={theme.error}>{err}</text> : null}
       </box>
     </Frame>
   )
@@ -303,18 +316,24 @@ const Clarify = forwardRef<PromptCardHandle, {
 const Masked = forwardRef<PromptCardHandle, {
   title: string
   note: string
-  onSubmit: (v: string) => void
+  onSubmit: (v: string) => Promise<unknown>
   onAnswer: Answer
 }>((p, ref) => {
   const theme = useTheme().theme
   const [value, setValue] = useState("")
+  const [err, setErr] = useState("")
   const done = useRef(false)
 
   const go = (v: string) => {
     if (done.current) return
     done.current = true
-    p.onSubmit(v)
-    p.onAnswer(v ? "(provided)" : "(cancelled)", v !== "")
+    setErr("")
+    void p.onSubmit(v)
+      .then(() => p.onAnswer(v ? "(provided)" : "(cancelled)", v !== ""))
+      .catch((e: Error) => {
+        done.current = false
+        setErr(e.message)
+      })
   }
 
   useImperativeHandle(ref, () => ({
@@ -332,28 +351,61 @@ const Masked = forwardRef<PromptCardHandle, {
         <text fg={theme.text}>{p.note}</text>
         <box height={1} />
         <MaskInput value={value} input={setValue} submit={() => go(value)} />
+        {err ? <text fg={theme.error}>{err}</text> : null}
         <text fg={theme.textMuted}>Enter submit · Esc cancel</text>
       </box>
     </Frame>
   )
 })
 
+function same(a: string | undefined, b: string): boolean {
+  return Boolean(a && b && b.toLowerCase().includes(a.toLowerCase()))
+}
+
+function cap(s: string, n = 160): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + "…"
+}
+
+function question(part: PromptPart): string {
+  const a = part.answered?.question
+  if (a) return a
+  if (part.req.variant === "clarify") return part.req.question
+  if (part.req.variant === "approval") return mkApproval(part.req).question
+  if (part.req.variant === "sudo") return "Sudo required"
+  return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
+}
+
+function outcome(part: PromptPart): { head: string; body?: string } {
+  const a = part.answered!
+  if (part.variant === "clarify") {
+    const q = cap(question(part))
+    const body = cap(a.label)
+    return same(q, a.label) ? { head: body } : { head: q, body }
+  }
+  if (part.variant === "approval") {
+    const q = cap(question(part), 96)
+    return { head: a.label, body: q }
+  }
+  if (part.variant === "sudo") return { head: `sudo ${a.label}` }
+  const req = part.req as Extract<PromptReq, { variant: "secret" }>
+  return { head: `${req.env_var ?? "secret"} ${a.label}` }
+}
+
 const Outcome = memo(({ part }: { part: PromptPart }) => {
   const theme = useTheme().theme
   const a = part.answered!
   const glyph = a.ok ? "✓" : "✗"
   const fg = a.ok ? theme.success : theme.error
-  const what =
-    part.variant === "approval" ? a.label
-    : part.variant === "clarify" ? `chose: ${a.label}`
-    : part.variant === "sudo" ? `sudo ${a.label}`
-    : `${(part.req as { env_var?: string }).env_var ?? "secret"} ${a.label}`
+  const text = outcome(part)
   return (
-    <box height={1} paddingLeft={3} marginBottom={1}>
-      <text>
-        <span fg={fg}>{glyph} </span>
-        <span fg={theme.textMuted}>{what}</span>
-      </text>
+    <box flexDirection="row" paddingLeft={3} marginBottom={1}>
+      <box width={2} flexShrink={0}>
+        <text fg={fg}>{glyph}</text>
+      </box>
+      <box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <text fg={theme.textMuted} wrapMode="word">{text.head}</text>
+        {text.body ? <text fg={theme.textMuted} wrapMode="word">{text.body}</text> : null}
+      </box>
     </box>
   )
 })
@@ -373,13 +425,13 @@ export const PromptCard = memo(forwardRef<PromptCardHandle, {
   if (req.variant === "sudo")
     return <Masked ref={ref} title="🔒 Sudo required"
                    note="Enter your password to elevate privileges."
-                   onSubmit={v => void gw.request("sudo.respond",
-                     { request_id: req.request_id, password: v }).catch(() => {})}
+                   onSubmit={v => gw.request("sudo.respond",
+                     { request_id: req.request_id, password: v })}
                    onAnswer={answer} />
   return <Masked ref={ref} title={`🔑 Secret: ${req.env_var}`}
                  note={req.prompt}
-                 onSubmit={v => void gw.request("secret.respond",
-                   { request_id: req.request_id, value: v }).catch(() => {})}
+                 onSubmit={v => gw.request("secret.respond",
+                   { request_id: req.request_id, value: v })}
                  onAnswer={answer} />
 }))
 

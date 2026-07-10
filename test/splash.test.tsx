@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterAll } from "bun:test"
+import { describe, test, expect, afterAll } from "bun:test"
 import { act } from "react"
 import { mount, until } from "./harness"
 import { openStateDb } from "./fixtures/state-db"
@@ -33,6 +33,38 @@ describe("splash (herm-tji.2)", () => {
     expect(t.frame()).toContain("Ready")              // composer still live
     expect(t.frame()).not.toContain("continue \"")     // no lastReal
     t.destroy()
+  })
+
+  test("upstream no-count sentinel is not shown as a negative behind count", async () => {
+    seed()
+    const t = await mount({
+      launch: { mode: "new", splash: true },
+      handlers: { "session.create": () => ({ session_id: "test-sid", info: { update_behind: -1 } }) },
+    })
+    await until(t, () => splashUp(t.frame()))
+    expect(t.frame()).not.toContain("-1 behind")
+    expect(t.frame()).not.toContain("-1 commits behind")
+    t.destroy()
+  })
+
+  test("zero and positive behind counts stay visible", async () => {
+    seed()
+    const t = await mount({
+      launch: { mode: "new", splash: true },
+      handlers: { "session.create": () => ({ session_id: "test-sid", info: { update_behind: 0 } }) },
+    })
+    await until(t, () => t.frame().includes("up to date"))
+    expect(t.frame()).toContain("up to date")
+    t.destroy()
+
+    seed()
+    const u = await mount({
+      launch: { mode: "new", splash: true },
+      handlers: { "session.create": () => ({ session_id: "test-sid", info: { update_behind: 3 } }) },
+    })
+    await until(u, () => u.frame().includes("3 behind"))
+    expect(u.frame()).toContain("3 behind")
+    u.destroy()
   })
 
   test("tip pinned at bottom of inner window; click cycles", async () => {

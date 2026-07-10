@@ -18,7 +18,7 @@ import { useKeyboard } from "@opentui/react"
 import type { Message, Usage } from "../types/message"
 import { text as msgText } from "../types/message"
 import { makeSource, type ToolInfo, type HermesConfig, type ToolsInfo } from "../service/hermes-home"
-import type { SessionInfo } from "../context/wire"
+import type { ContextBreakdownResponse, ContextUsageCategory, SessionInfo } from "../context/wire"
 import { useHome, home } from "../home"
 import { useGateway } from "../context/gateway"
 import { useKeys, handleListKey } from "../keys"
@@ -53,6 +53,13 @@ type Props = {
 
 type Wire = { input: number; output: number; total: number; calls: number }
 type ContextMeter = { max: number; used?: number }
+type RemoteBreakdown = {
+  categories: ContextUsageCategory[]
+  context_max: number
+  context_used: number
+  estimated_total: number
+  model?: string
+}
 
 // Last-resort fallback when neither the gateway (info.context_max) nor
 // config (model.context_length) has surfaced a window yet. Real value
@@ -82,6 +89,21 @@ export const SLOTS = [
 ] as const
 
 const SLOT: Record<string, number> = Object.fromEntries(SLOTS.map((id, i) => [id, i]))
+const REMOTE: Record<string, string> = {
+  tool_definitions: "system_tools",
+  mcp: "mcp_tools",
+  rules: "system_prompt",
+  subagent_definitions: "system_tools",
+}
+const ORDER = ["system_prompt", "system_tools", "mcp_tools", "memory", "skills", "conversation"]
+const LABEL: Record<string, string> = {
+  system_prompt: "System Prompt",
+  system_tools: "System Tools",
+  mcp_tools: "MCP Tools",
+  memory: "Memory",
+  skills: "Skills",
+  conversation: "Conversation",
+}
 
 // Ramp is deterministic per theme; cache on theme identity so every clr()
 // call across all panels resolves from one array. Theme objects are stable
@@ -312,6 +334,60 @@ export const contextMeter = (usage: Usage | undefined, info: SessionInfo | undef
   used: usage?.context_used ?? info?.usage?.context_used ?? info?.context_used,
 })
 
+export const contextBreakdown = (data: unknown): RemoteBreakdown | null => {
+  if (!data || typeof data !== "object") return null
+  const raw = data as ContextBreakdownResponse
+  const max = Number(raw.context_max)
+  const used = Number(raw.context_used)
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(used) || used < 0) return null
+  if (!Array.isArray(raw.categories)) return null
+  const categories = raw.categories.flatMap(cat => {
+    if (!cat || typeof cat !== "object") return []
+    const id = typeof cat.id === "string" ? cat.id.trim() : ""
+    const label = typeof cat.label === "string" ? cat.label.trim() : ""
+    const tokens = Number(cat.tokens)
+    if (!id || !label || !Number.isFinite(tokens) || tokens < 0) return []
+    return [{ id, label, tokens, color: typeof cat.color === "string" ? cat.color : undefined }]
+  })
+  return {
+    categories,
+    context_max: max,
+    context_used: Math.min(used, max),
+    estimated_total: Number.isFinite(Number(raw.estimated_total)) ? Math.max(0, Number(raw.estimated_total)) : 0,
+    model: typeof raw.model === "string" ? raw.model : undefined,
+  }
+}
+
+export const remoteSegments = (data: RemoteBreakdown, local: ReadonlyArray<Segment>): Segment[] => {
+  const byId = new Map(local.map(seg => [seg.id, seg]))
+  const bucket = new Map<string, { label: string; tokens: number }>()
+  for (const cat of data.categories) {
+    const id = REMOTE[cat.id] ?? cat.id
+    const prev = bucket.get(id)
+    bucket.set(id, { label: byId.get(id)?.label ?? prev?.label ?? cat.label, tokens: (prev?.tokens ?? 0) + cat.tokens })
+  }
+  const pct = (n: number) => data.context_max > 0 ? (n / data.context_max) * 100 : 0
+  const ids = [...ORDER, ...bucket.keys().filter(id => !ORDER.includes(id))]
+  const segs = ids.flatMap(id => {
+    const cat = bucket.get(id)
+    if (!cat || cat.tokens <= 0) return []
+    const seg = byId.get(id)
+    return [{
+      ...(seg ?? {}),
+      id,
+      label: seg?.label ?? LABEL[id] ?? cat.label,
+      tokens: cat.tokens,
+      percent: pct(cat.tokens),
+    }]
+  })
+  const taken = segs.reduce((sum, seg) => sum + seg.tokens, 0)
+  const unknown = Math.max(0, data.context_used - taken)
+  if (unknown > 0) segs.push({ id: "unknown", label: "Unknown / Provider Overhead", tokens: unknown, percent: pct(unknown) })
+  const free = Math.max(0, data.context_max - data.context_used)
+  segs.push({ id: "free", label: "Free", tokens: free, percent: pct(free) })
+  return segs
+}
+
 export const Context = memo(({ messages = NO_MESSAGES as Message[], info, usage, focused }: Props) => {
   const config = useHome("config")
   const memory = useHome("memory")
@@ -329,6 +405,7 @@ export const Context = memo(({ messages = NO_MESSAGES as Message[], info, usage,
   const [hovered, setHovered] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [drilled, setDrilled] = useState<string | null>(null)
+  const [remote, setRemote] = useState<RemoteBreakdown | null>(null)
 
   // Track wire usage from messages
   useEffect(() => {
@@ -346,8 +423,27 @@ export const Context = memo(({ messages = NO_MESSAGES as Message[], info, usage,
     setWire(next)
   }, [messages])
 
+  const rev = usage?.context_used ?? info?.usage?.context_used ?? info?.context_used
+  // Context accounting is expensive upstream; wait for usage/message bursts
+  // to settle and ignore superseded responses.
+  useEffect(() => {
+    const sid = info?.session_id
+    if (!sid) {
+      setRemote(null)
+      return
+    }
+    let done = false
+    const timer = setTimeout(() => {
+      void gw.request<ContextBreakdownResponse>("session.context_breakdown", { session_id: sid })
+        .then(data => { if (!done) setRemote(contextBreakdown(data)) })
+        .catch(() => { if (!done) setRemote(null) })
+    }, 300)
+    return () => { done = true; clearTimeout(timer) }
+  }, [gw, info?.session_id, info?.usage?.compressions, messages.length, rev])
+
   // Derived
-  const meter = contextMeter(usage, info, config ?? null)
+  const localMeter = contextMeter(usage, info, config ?? null)
+  const meter = remote ? { max: remote.context_max, used: remote.context_used } : localMeter
   const ctxLen = meter.max
   const used = meter.used
   const reliable = typeof used === "number"
@@ -377,13 +473,14 @@ export const Context = memo(({ messages = NO_MESSAGES as Message[], info, usage,
     return toolsInfo
   }, [info, toolsInfo])
 
-  const top = useMemo(() => build({
+  const local = useMemo(() => build({
     contextLength: ctxLen,
     usedTokens: used,
     sections,
     conversationTokens: convTok,
     tools: currentTools?.tools ?? [],
   }), [ctxLen, used, sections, convTok, currentTools])
+  const top = useMemo(() => remote ? remoteSegments(remote, local) : local, [remote, local])
 
   // Current view: top-level or drilled
   const drilledGroup = drilled ? top.find(s => s.id === drilled) : null

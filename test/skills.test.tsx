@@ -6,6 +6,15 @@ import { hermesPath } from "../src/service/hermes-home"
 import { Skills } from "../src/tabs/Skills"
 
 describe("Skills tab", () => {
+  test("list failure surfaces instead of rendering an unexplained empty tab", async () => {
+    const gw = new MockGateway({
+      "skills.manage": () => { throw new Error("skills exploded") },
+    })
+    const t = await mountNode(<Skills focused />, { gw })
+    await until(t, () => t.frame().includes("skills exploded"))
+    t.destroy()
+  })
+
   test("renders installed skills without native Map.groupBy", async () => {
     const group = Map.groupBy
     Map.groupBy = undefined as unknown as typeof Map.groupBy
@@ -21,6 +30,32 @@ describe("Skills tab", () => {
     } finally {
       Map.groupBy = group
     }
+  })
+
+  test("stale list response cannot replace a newer refresh", async () => {
+    let stale!: (value: unknown) => void
+    let lists = 0
+    const gw = new MockGateway({
+      "skills.manage": p => {
+        if (p.action !== "list") return {}
+        if (lists++ === 0) return { skills: { general: ["initial"] } }
+        if (lists === 2) return new Promise(resolve => { stale = resolve })
+        return { skills: { general: ["fresh"] } }
+      },
+    })
+    const t = await mountNode(<Skills focused />, { gw, width: 160 })
+    await until(t, () => t.frame().includes("initial"))
+    await act(async () => { await t.keys.typeText("r") })
+    await until(t, () => lists === 2)
+    await act(async () => { await t.keys.typeText("r") })
+    await until(t, () => t.frame().includes("fresh"))
+
+    stale({ skills: { general: ["stale"] } })
+    await act(async () => { await Bun.sleep(0) })
+    await t.settle()
+    expect(t.frame()).toContain("fresh")
+    expect(t.frame()).not.toContain("stale")
+    t.destroy()
   })
 
   test("enriches description/tags from SKILL.md frontmatter on disk", async () => {

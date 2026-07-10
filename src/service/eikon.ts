@@ -19,7 +19,7 @@
 import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync, rmSync, statSync, renameSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { join, extname, basename, dirname } from "node:path"
-import { canonicalSignal, defaultSignalMappings, header as peekHeader, type LaunchStreamRecord, type SourceKind } from "eikon"
+import { defaultSignalMappings, header as peekHeader, type LaunchStreamRecord, type SourceKind } from "eikon"
 import { install, resolve, peek, entries as packageEntries, downloadBytes, dirty,
          type Installed as Got, type Resolved as ResolvedEikon, type Origin as EikonOrigin, type TrustState, type DownloadOptions } from "eikon/install"
 import { decodeRuntimeBytes, serializeLaunchStream, type RuntimeDescriptor } from "eikon/stream"
@@ -1010,21 +1010,6 @@ async function loadRuntime(man: PackageManifest, base: string, fetcher: typeof f
 export async function previewPackage(entry: CatalogPackage, fetcher: typeof fetch = fetch): Promise<AdaptedPackage> {
   const { man, base } = await loadPackage(entry.packageUrl, fetcher)
   return adaptPackage(man, (await loadRuntime(man, base, fetcher)).text)
-}
-
-async function installLaunch(url: string, opts: { name?: string; fetcher?: typeof fetch } = {}): Promise<Fetched> {
-  const { man, base } = await loadPackage(url, opts.fetcher)
-  const name = opts.name ?? man.name
-  const run = await loadRuntime(man, base, opts.fetcher)
-  const adapted = await adaptPackage(man, run.text)
-  const paths = ensure(name)
-  const clips = new Map<AvatarState, Frame[]>()
-  for (const st of STATES) clips.set(st, adapted.eikon.states.get(st)?.frames ?? [[""]])
-  await Bun.write(paths.file, run.bytes)
-  await Bun.write(join(paths.dir, "manifest.json"), JSON.stringify({ ...man, origin: { source: url, at: new Date().toISOString() } }, null, 2) + "\n")
-  writeStudio(name, { ...toStudio(fresh(name, pick())), sources: {} })
-  bump()
-  return { name, sources: {}, n: 1, bytes: run.bytes.length }
 }
 
 export async function installPackage(src: string | CatalogPackage, opts: { name?: string; fetcher?: DownloadOptions["fetcher"] } = {}): Promise<Fetched> {

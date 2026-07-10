@@ -292,6 +292,24 @@ describe("app", () => {
     t.destroy()
   })
 
+  test("copy-last shows toast", async () => {
+    const t = await mount({ width: 130, height: 18 })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("user one") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    act(() => {
+      t.gw.push({ type: "message.start" })
+      t.gw.push({ type: "message.complete", payload: { text: "agent one", usage: { input: 1, output: 1, total: 2 } } })
+    })
+    await until(t, () => t.frame().includes("agent one"))
+
+    act(() => { t.keys.pressKey("x", { ctrl: true }); t.keys.pressKey("y") })
+    await until(t, () => t.frame().includes("Copied to clipboard"))
+    t.destroy()
+  })
+
 
   test("marketplace detail preview does not change active sidebar preference", async () => {
     const HH = process.env.HERMES_HOME!
@@ -488,6 +506,31 @@ describe("app", () => {
     t.destroy()
   })
 
+  test("approval prompt expires when the gateway times out and the turn completes", async () => {
+    const t = await mount()
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("go") })
+    act(() => t.keys.pressEnter())
+    act(() => t.gw.push({ type: "message.start" }))
+    act(() => t.gw.push({
+      type: "approval.request",
+      payload: { command: "rm -rf /tmp/x", description: "delete temp tree" },
+    }))
+    await until(t, () => t.frame().includes("Permission required"))
+
+    act(() => t.gw.push({
+      type: "message.complete",
+      payload: { text: "approval timed out", usage: { input: 0, output: 0, total: 0 } },
+    }))
+    await until(t, () => t.frame().includes("Timed out") && !t.frame().includes("Permission required"))
+
+    act(() => t.keys.pressKey("1"))
+    await t.settle()
+    expect(t.gw.last("approval.respond")).toBeUndefined()
+    t.destroy()
+  })
+
   test("inline prompt Esc does not arm interrupt; tab-nav still works (no backdrop)", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
@@ -543,9 +586,10 @@ describe("app", () => {
     await act(async () => { await t.keys.typeText("2") })
     await until(t, () => t.gw.last("clarify.respond") !== undefined)
     expect(t.gw.last("clarify.respond")?.params).toMatchObject({ request_id: "c1", answer: "blue" })
-    // Outcome persists after turn ends.
+    // Outcome persists after turn ends with question context.
     act(() => t.gw.push({ type: "message.complete", payload: { text: "ok", usage: { input: 0, output: 0, total: 0 } } }))
-    await until(t, () => t.frame().includes("chose: blue"))
+    await until(t, () => t.frame().includes("blue"))
+    expect(t.frame()).toContain("which one?")
     t.destroy()
   })
 
@@ -577,7 +621,7 @@ describe("app", () => {
     t.destroy()
   })
 
-  test("slash popover opens on '/' and Enter dispatches local command", async () => {
+  test("slash popover Enter completes command before local dispatch", async () => {
     const gw = new MockGateway({
       "commands.catalog": () => ({ pairs: [["/model", "Switch model"]] }),
     })
@@ -591,12 +635,36 @@ describe("app", () => {
     await act(async () => { await t.keys.typeText("cle") })
     await t.settle()
     act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("> /clear"))
+
+    expect(t.gw.last("slash.exec")).toBeUndefined()
+    expect(t.gw.last("prompt.submit")).toBeUndefined()
+    expect(t.frame().split("\n").filter(l => l.includes("/clear")).length).toBe(1)
+
+    act(() => t.keys.pressEnter())
     await t.settle()
 
-    // /clear is local — no gateway call, transcript cleared, popover closed
+    // /clear is local — no gateway call, transcript cleared, input cleared.
     expect(t.gw.last("slash.exec")).toBeUndefined()
-    expect(t.frame()).not.toContain("/clear")
+    expect(t.gw.last("prompt.submit")).toBeUndefined()
+    expect(t.frame()).not.toContain("> /clear")
 
+    t.destroy()
+  })
+
+  test("mixed prose slash command submits through prompt.submit, not local slash", async () => {
+    const t = await mount()
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("please /clear now") })
+    await until(t, () => t.frame().includes("/clear"))
+    act(() => t.keys.pressEscape())
+    await t.settle()
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.gw.last("prompt.submit") !== undefined)
+
+    expect(t.gw.last("prompt.submit")?.params.text).toBe("please /clear now")
+    expect(t.gw.last("slash.exec")).toBeUndefined()
     t.destroy()
   })
 
@@ -615,7 +683,7 @@ describe("app", () => {
   })
 
   test("/theme light|dark sets theme mode locally", async () => {
-    await using h = await tmpHome({ prefs: { theme: "tokyonight", themeMode: "dark" } })
+    await using _home = await tmpHome({ prefs: { theme: "tokyonight", themeMode: "dark" } })
     await using t = await mount()
     await until(t, () => t.frame().includes("Ready"))
 
@@ -629,6 +697,31 @@ describe("app", () => {
     act(() => t.keys.pressEnter())
     await until(t, () => t.frame().includes("theme mode → dark"))
     expect(prefs.get("themeMode")).toBe("dark")
+  })
+
+  test("/model --refresh opens picker with forced refresh", async () => {
+    const gw = new MockGateway({
+      "commands.catalog": () => ({ pairs: [["/model", "Switch model"]] }),
+      "model.options": () => ({
+        provider: "anthropic",
+        model: "claude-3",
+        providers: [{ slug: "anthropic", name: "Anthropic", is_current: true, total_models: 1, models: ["claude-3"] }],
+      }),
+      "config.set": () => { throw new Error("unexpected config.set") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("/model --refresh") })
+    act(() => t.keys.pressEscape())
+    await t.settle()
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Switch Provider"))
+
+    expect(t.gw.last("model.options")?.params).toMatchObject({ refresh: true })
+    expect(t.gw.last("config.set")).toBeUndefined()
+    expect(t.gw.last("prompt.submit")).toBeUndefined()
+    t.destroy()
   })
 
   test("/branch activates the live branch session id", async () => {
@@ -656,6 +749,19 @@ describe("app", () => {
     expect(t.gw.last("session.resume")).toBeUndefined()
     expect(t.frame()).toContain("branch seed")
     expect(t.frame()).not.toContain("Failed to resume")
+    t.destroy()
+  })
+
+  test("/branch surfaces the gateway failure", async () => {
+    const gw = new MockGateway({
+      "session.branch": () => { throw new Error("branch exploded") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("/branch") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("branch exploded"))
     t.destroy()
   })
 
@@ -879,6 +985,72 @@ describe("app", () => {
     t.destroy()
   })
 
+  test("/compress surfaces gateway failure", async () => {
+    const gw = new MockGateway({
+      "session.compress": () => { throw new Error("compress exploded") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("/compress") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("compress exploded"))
+    t.destroy()
+  })
+
+  test("failed /undo does not create a redo snapshot", async () => {
+    const gw = new MockGateway({
+      "session.undo": () => { throw new Error("undo exploded") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("seed") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    act(() => {
+      gw.push({ type: "message.start" })
+      gw.push({ type: "message.complete", payload: { text: "reply", usage: { input: 1, output: 1, total: 2 } } })
+    })
+    await until(t, () => t.frame().includes("reply") && t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("/undo") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Undo last turn?"))
+    await act(async () => { await t.keys.typeText("y") })
+    await until(t, () => t.frame().includes("undo exploded"))
+    expect(gw.last("session.history")).toBeUndefined()
+
+    await act(async () => { await t.keys.typeText("/redo") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("nothing to redo"))
+    t.destroy()
+  })
+
+  test("/retry does not resubmit when rewind fails", async () => {
+    const gw = new MockGateway({
+      "session.undo": () => { throw new Error("retry rewind exploded") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("seed") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    act(() => {
+      gw.push({ type: "message.start" })
+      gw.push({ type: "message.complete", payload: { text: "reply", usage: { input: 1, output: 1, total: 2 } } })
+    })
+    await until(t, () => t.frame().includes("reply") && t.frame().includes("Ready"))
+    const before = gw.calls.filter(call => call.method === "prompt.submit").length
+
+    await act(async () => { await t.keys.typeText("/retry") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("retry rewind exploded"))
+    expect(gw.calls.filter(call => call.method === "prompt.submit")).toHaveLength(before)
+    t.destroy()
+  })
+
 
   test("click user message → action menu → Rewind → N×session.undo → composer seeded", async () => {
     // History after rewind: server-authoritative via session.history.
@@ -970,6 +1142,38 @@ describe("app", () => {
     expect(t.gw.last("session.activate")?.params.session_id).toBe("branch-sid")
     // Composer seeded.
     expect(t.frame()).toContain("> seed q")
+    t.destroy()
+  })
+
+  test("fork undo failure closes the branch without activating it", async () => {
+    const gw = new MockGateway({
+      "session.branch": () => ({ session_id: "broken-branch", title: "broken" }),
+      "session.undo": () => { throw new Error("branch undo failed") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("seed q") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    act(() => {
+      gw.push({ type: "message.start" })
+      gw.push({ type: "message.complete", payload: { text: "re: seed q", usage: { input: 1, output: 1, total: 2 } } })
+    })
+    await until(t, () => t.frame().includes("re: seed q"))
+
+    const rows = t.frame().split("\n")
+    const y = rows.findIndex(l => l.includes("seed q") && !l.includes("re:") && !l.includes("┇"))
+    await act(async () => { await t.mouse.click(4, y) })
+    await until(t, () => t.frame().includes("Message Actions"))
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("branch undo failed"))
+
+    expect(gw.last("session.activate")).toBeUndefined()
+    expect(gw.last("session.close")?.params.session_id).toBe("broken-branch")
+    expect(t.frame()).not.toContain("forked →")
     t.destroy()
   })
 
@@ -1102,6 +1306,8 @@ describe("app", () => {
       payload: {
         model: "test-model", session_id: "sid-abc", version: "9.9.9",
         cwd: "/workspace", tools: { web: ["a", "b"], file: ["c"] }, skills: {},
+        credential_warning: "credential warning stays transient",
+        install_warning: "Herm CLI is not on PATH",
       },
     }))
     await until(t, () => t.frame().includes("Ready"))
@@ -1119,6 +1325,8 @@ describe("app", () => {
     expect(f).toContain("sid-abc")
     expect(f).toContain("/workspace")
     expect(f).toContain("3 in 2 toolsets")
+    expect(f).toContain("Herm CLI is not on PATH")
+    expect(f).not.toContain("credential warning stays transient")
     t.destroy()
   })
 
@@ -1179,6 +1387,52 @@ describe("app", () => {
     t.destroy()
   })
 
+  test("compression lifecycle stays in the transcript while streaming", async () => {
+    const t = await mount()
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => {
+      t.gw.push({ type: "message.start" })
+      t.gw.push({ type: "status.update", payload: { kind: "lifecycle", text: "📦 Preflight compression: ~230,802 tokens >= 217,600 threshold. This may take a moment." } })
+    })
+    await until(t, () => t.frame().includes("Preflight compression"))
+    expect(t.frame()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)
+
+    act(() => t.gw.push({ type: "message.complete", payload: { text: "done", usage: { input: 1, output: 1, total: 2 } } }))
+    await until(t, () => t.frame().includes("Ready"))
+    const done = t.frame().split("\n")
+    const line = done.find(l => l.includes("Ready")) ?? ""
+    expect(line).not.toContain("Preflight compression")
+    expect(t.frame()).toContain("Preflight compression")
+    t.destroy()
+  })
+
+  test("hidden sidebar context moves to composer tray only when sidebar is hidden", async () => {
+    const gw = new MockGateway()
+    const t = await mount({ gw, width: 160, height: 48 })
+    act(() => gw.push({
+      type: "session.info",
+      payload: {
+        model: "wide-model", session_id: "test-sid", cwd: "/tmp/herm-work", tools: {}, skills: {},
+      },
+    }))
+    await until(t, () => t.frame().includes("wide-model"))
+    expect(t.frame()).toMatch(/Profile\s+default/)
+    expect(t.frame()).not.toContain("p:default")
+
+    t.resize(100, 48)
+    await until(t, () => {
+      const f = t.frame()
+      return f.includes("default") && f.includes("wide-model") && f.includes("herm-work")
+        && !/Profile\s+default/.test(f)
+    })
+    expect(t.frame()).not.toContain("p:default")
+    expect(t.frame()).not.toContain("m:wide-model")
+    expect(t.frame()).not.toContain("b:herm-work")
+    expect(t.frame()).not.toContain("ctx:")
+    expect(t.frame()).not.toMatch(/Profile\s+default/)
+    t.destroy()
+  })
+
   test("preflight compression stderr does not end the active turn", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
@@ -1218,6 +1472,29 @@ describe("app", () => {
     expect(t.gw.last("prompt.submit")?.params.text).toBe("branch is OUT<git rev-parse> ok")
     // Transcript shows the expanded form, not the raw template.
     expect(t.frame()).not.toContain("{!git")
+    t.destroy()
+  })
+
+  test("failed interrupt reopens the stream gate", async () => {
+    const t = await mount({ handlers: {
+      "session.interrupt": () => { throw new Error("interrupt exploded") },
+    }})
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => {
+      t.gw.push({ type: "message.start" })
+      t.gw.push({ type: "message.delta", payload: { text: "before " } })
+    })
+    await until(t, () => t.frame().includes("Generating"))
+
+    act(() => t.keys.pressEscape()); await t.settle()
+    act(() => t.keys.pressEscape())
+    await until(t, () => t.frame().includes("interrupt exploded"))
+
+    act(() => {
+      t.gw.push({ type: "message.delta", payload: { text: "continued" } })
+      t.gw.push({ type: "message.complete", payload: { text: "before continued", usage: { input: 1, output: 1, total: 2 } } })
+    })
+    await until(t, () => t.frame().includes("before continued"))
     t.destroy()
   })
 

@@ -22,6 +22,7 @@ import { setHome as setHermesHome } from "../service/hermes-home"
 import { setHome as setDbHome } from "../service/sessions-db"
 import { cache as analyticsCache } from "../service/hermes-analytics"
 import { resetKanban } from "../service/hermes-kanban"
+import { close as closeKanbanWorker } from "../io/kanban"
 import { prefs } from "../context/preferences"
 import { home } from "./store"
 
@@ -33,6 +34,7 @@ export function rehome(newHome: string): void {
   setDbHome(newHome)
   analyticsCache.clear()
   resetKanban()
+  closeKanbanWorker()
   prefs.reload()
   home.reset()
 }

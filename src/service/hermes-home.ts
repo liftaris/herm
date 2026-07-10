@@ -748,19 +748,21 @@ export async function readCronOutput(
   return { at: st.mtime, path, text };
 }
 
-const ENV_PATH = hermesPath(".env");
+const envPath = () => hermesPath(".env")
+
+const envKey = (key: string) => key.replace(/^export\s+/, "").trim()
 
 /** Parse ~/.hermes/.env into Record<string, string> */
 export async function readEnvFile(): Promise<Record<string, string>> {
   try {
-    const text = await Bun.file(ENV_PATH).text();
+    const text = await Bun.file(envPath()).text();
     const vars: Record<string, string> = {};
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
       const eq = trimmed.indexOf("=");
       if (eq < 1) continue;
-      vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+      vars[envKey(trimmed.slice(0, eq))] = trimmed.slice(eq + 1);
     }
     return vars;
   } catch {
@@ -772,13 +774,14 @@ export async function readEnvFile(): Promise<Record<string, string>> {
 export async function writeEnvVar(key: string, value: string): Promise<void> {
   let text = "";
   try {
-    text = await Bun.file(ENV_PATH).text();
+    text = await Bun.file(envPath()).text();
   } catch { /* file may not exist */ }
 
   const lines = text.split("\n");
   let found = false;
   const updated = lines.map(line => {
-    if (line.startsWith(`${key}=`)) {
+    const eq = line.trim().indexOf("=")
+    if (eq >= 1 && envKey(line.trim().slice(0, eq)) === key) {
       found = true;
       return `${key}=${value}`;
     }
@@ -786,47 +789,64 @@ export async function writeEnvVar(key: string, value: string): Promise<void> {
   });
   if (!found) updated.push(`${key}=${value}`);
 
-  await Bun.write(ENV_PATH, updated.join("\n"));
+  await Bun.write(envPath(), updated.join("\n"));
 }
 
 /** Remove a key from ~/.hermes/.env */
 export async function removeEnvVar(key: string): Promise<void> {
   let text = "";
   try {
-    text = await Bun.file(ENV_PATH).text();
+    text = await Bun.file(envPath()).text();
   } catch { return; }
 
-  const lines = text.split("\n").filter(l => !l.startsWith(`${key}=`));
-  await Bun.write(ENV_PATH, lines.join("\n"));
+  const lines = text.split("\n").filter(line => {
+    const eq = line.trim().indexOf("=")
+    return eq < 1 || envKey(line.trim().slice(0, eq)) !== key
+  });
+  await Bun.write(envPath(), lines.join("\n"));
 }
 
 export const ENV_CATALOG: ReadonlyArray<{ category: string; keys: string[] }> = [
   {
     category: "LLM Providers",
     keys: [
-      "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
-      "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY",
-      "MISTRAL_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY",
-      "FIREWORKS_API_KEY", "NOUS_API_KEY",
+      "ANTHROPIC_API_KEY", "ARCEEAI_API_KEY", "DEEPSEEK_API_KEY",
+      "FIREWORKS_API_KEY", "GEMINI_API_KEY", "GLM_API_KEY", "GMI_API_KEY",
+      "GOOGLE_API_KEY", "GROQ_API_KEY", "KIMI_API_KEY", "LM_API_KEY",
+      "MINIMAX_API_KEY", "MISTRAL_API_KEY", "NOUS_API_KEY", "NVIDIA_API_KEY",
+      "OPENAI_API_KEY", "OPENROUTER_API_KEY", "STEPFUN_API_KEY",
+      "TOGETHER_API_KEY", "VERTEX_CREDENTIALS_PATH", "XAI_API_KEY",
+      "ZAI_API_KEY", "Z_AI_API_KEY",
     ],
   },
   {
     category: "Tool API Keys",
     keys: [
-      "FIRECRAWL_API_KEY", "BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID",
-      "TAVILY_API_KEY", "EXA_API_KEY", "ELEVENLABS_API_KEY",
+      "AGENT_BROWSER_ENGINE", "BRAVE_SEARCH_API_KEY", "BROWSERBASE_API_KEY",
+      "BROWSERBASE_PROJECT_ID", "BROWSER_USE_API_KEY", "CAMOFOX_API_KEY",
+      "CAMOFOX_URL", "ELEVENLABS_API_KEY", "EXA_API_KEY", "FAL_KEY",
+      "FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "FIRECRAWL_BROWSER_TTL",
+      "KREA_API_KEY", "OPENVIKING_API_KEY", "OPENVIKING_ENDPOINT",
+      "SEARXNG_URL", "TAVILY_API_KEY", "TOOL_GATEWAY_DOMAIN",
+      "TOOL_GATEWAY_SCHEME", "TOOL_GATEWAY_USER_TOKEN",
     ],
   },
   {
     category: "Messaging",
     keys: [
-      "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
-      "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN",
+      "DISCORD_ALLOWED_USERS", "DISCORD_BOT_TOKEN", "DISCORD_REPLY_TO_MODE",
+      "SLACK_ALLOWED_USERS", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN",
+      "TELEGRAM_ALLOWED_USERS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_PROXY",
     ],
   },
   {
     category: "Agent",
-    keys: ["API_SERVER_KEY", "MEM0_API_KEY"],
+    keys: [
+      "API_SERVER_KEY", "BRV_API_KEY", "HERMES_LANGFUSE_BASE_URL",
+      "HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY",
+      "HINDSIGHT_API_KEY", "HINDSIGHT_API_URL", "MEM0_API_KEY",
+      "RETAINDB_API_KEY", "RETAINDB_BASE_URL", "SUPERMEMORY_API_KEY",
+    ],
   },
 ];
 

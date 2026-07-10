@@ -45,7 +45,7 @@ test("theme picker: open + navigate does not loop, preview applies", async () =>
 })
 
 test("theme picker: Tab toggles mode, Esc reverts, Enter keeps it", async () => {
-  await using h = await tmpHome({ prefs: { theme: "tokyonight", themeMode: "dark" } })
+  await using _home = await tmpHome({ prefs: { theme: "tokyonight", themeMode: "dark" } })
   const handle = createRef<Handle>()
   await using t = await mountNode(<Probe handle={handle} />)
 

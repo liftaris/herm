@@ -24,7 +24,7 @@ export const titleWidth = (title: string, rows: EikonTitle[]) => Math.max(
   ...rows.map(r => r.name.length + 4),
 ) + 7
 
-export const cardWidth = (lines: string[]) => Math.max(EIKON_CARD, ...lines.map(line => line.length + 2))
+const cardWidth = (lines: string[]) => Math.max(EIKON_CARD, ...lines.map(line => line.length + 2))
 
 export const EikonTitleList = (props: {
   title: string

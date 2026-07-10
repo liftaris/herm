@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isDangerous, isLoopback, warningFor } from "../src/app/control"
+import { internals, isDangerous, isLoopback, setBridge, warningFor } from "../src/app/control"
 import { TABS } from "../src/app/tabs"
 
 const idx = (name: string) => TABS.findIndex(t => t.name === name)
@@ -98,4 +98,59 @@ describe("control.warningFor — exposure warning decision", () => {
     expect(w!.host).toBe("192.168.1.5")
     expect(w!.port).toBe(8080)
   })
+})
+
+test("POST /send waits for the bridge acknowledgement", async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  setBridge({
+    tab: () => 0,
+    setTab: () => {},
+    send: () => gate,
+    ready: () => true,
+    streaming: () => false,
+    messages: () => 0,
+    session: () => "sid",
+    input: () => "",
+    setInput: () => {},
+    focusRegion: () => "input",
+    setFocusRegion: () => {},
+    renderer: () => null,
+    logs: () => "",
+    plugin: async () => true,
+    push: () => {},
+  })
+  const pending = internals.handle(new Request("http://localhost/send", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "hello" }),
+  }))
+  expect(await Promise.race([pending.then(() => false), Bun.sleep(5).then(() => true)])).toBe(true)
+  const concurrent = internals.handle(new Request("http://localhost/send", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "second" }),
+  }))
+  const blocked = await Promise.race([concurrent, Bun.sleep(5).then(() => null)])
+  expect(blocked?.status).toBe(409)
+  release()
+  expect((await pending).status).toBe(200)
+})
+
+test("POST /send returns the bridge failure", async () => {
+  setBridge({
+    tab: () => 0, setTab: () => {},
+    send: async () => { throw new Error("submit unavailable") },
+    ready: () => true, streaming: () => false, messages: () => 0,
+    session: () => "sid", input: () => "", setInput: () => {},
+    focusRegion: () => "input", setFocusRegion: () => {}, renderer: () => null,
+    logs: () => "", plugin: async () => true, push: () => {},
+  })
+  const response = await internals.handle(new Request("http://localhost/send", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "hello" }),
+  }))
+  expect(response.status).toBe(502)
+  expect(await response.json()).toEqual({ error: "submit unavailable" })
 })

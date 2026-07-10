@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeAll, afterEach } from "bun:test"
+import { describe, test, expect, beforeAll, afterEach, spyOn } from "bun:test"
 import { act } from "react"
 import { Database } from "bun:sqlite"
-import { mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs"
+import { mkdirSync, writeFileSync, rmSync, chmodSync, renameSync } from "node:fs"
 import { join } from "node:path"
 import { mountNode, MockGateway, until } from "./harness"
 import { hermesPath } from "../src/service/hermes-home"
@@ -12,6 +12,7 @@ import {
 } from "../src/service/hermes-kanban"
 import { parseDispatchResult, dispatchFailures, dispatchVariant, dispatchDetails } from "../src/service/kanban-dispatch"
 import { Kanban } from "../src/tabs/Kanban"
+import { patchAt, resetWrites } from "../src/service/kanban-write"
 
 const now = Math.floor(Date.now() / 1000)
 
@@ -19,6 +20,7 @@ const schema = (db: Database) => {
   db.run(`CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY, title TEXT, body TEXT, assignee TEXT,
     status TEXT, priority INTEGER DEFAULT 0, tenant TEXT,
+    block_kind TEXT, block_recurrences INTEGER DEFAULT 0,
     created_at INTEGER, started_at INTEGER, completed_at INTEGER,
     result TEXT, last_spawn_error TEXT, worker_pid INTEGER,
     workspace_kind TEXT, workspace_path TEXT,
@@ -47,9 +49,14 @@ const schema = (db: Database) => {
 
 
 const cleanupHazardBoards = () => {
-  for (const slug of ["bad", "missing", "quarantined", "ui_bad", "unreadable"])
+  for (const slug of ["bad", "missing", "old", "quarantined", "ui_bad", "unreadable"])
     rmSync(hermesPath(`kanban/boards/${slug}`), { recursive: true, force: true })
   rmSync(hermesPath("kanban.db.corrupt.20260527_010204.bak"), { force: true })
+  try {
+    const db = new Database(hermesPath("kanban.db"))
+    db.run("UPDATE tasks SET block_kind = NULL, block_recurrences = 0")
+    db.close()
+  } catch {}
   resetKanban()
 }
 
@@ -136,6 +143,33 @@ describe("hermes-kanban readers", () => {
     expect(boardOf("atm10").get("ready")?.[0]?.id).toBe("m1")
     expect(boardOf("default").get("ready")?.[0]?.id).toBe("t1")
     expect([...boardOf("zeta").values()].every(v => v.length === 0)).toBe(true)
+  })
+
+  test("boardOf() reads typed block state when present and tolerates old schema", () => {
+    const db = new Database(hermesPath("kanban.db"))
+    db.run("UPDATE tasks SET block_kind = 'needs_input', block_recurrences = 2 WHERE id = 't5'")
+    db.close()
+    resetKanban()
+
+    const blocked = boardOf("default").get("blocked")?.find(t => t.id === "t5")
+    expect(blocked?.block_kind).toBe("needs_input")
+    expect(blocked?.block_recurrences).toBe(2)
+
+    mkdirSync(hermesPath("kanban/boards/old"), { recursive: true })
+    const old = new Database(hermesPath("kanban/boards/old/kanban.db"), { create: true })
+    old.run(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, title TEXT, body TEXT, assignee TEXT,
+      status TEXT, priority INTEGER DEFAULT 0, created_at INTEGER,
+      started_at INTEGER, completed_at INTEGER
+    )`)
+    old.run("INSERT INTO tasks (id, title, status, priority, created_at) VALUES ('old1', 'legacy board', 'ready', 1, ?)", [now])
+    old.close()
+    resetKanban()
+
+    const legacy = boardOf("old").get("ready")?.[0]
+    expect(legacy?.id).toBe("old1")
+    expect(legacy?.block_kind).toBeNull()
+    expect(legacy?.block_recurrences).toBe(0)
   })
 
 
@@ -515,6 +549,129 @@ describe("Kanban tab", () => {
     t.destroy()
   })
 
+  test("status editor uses typed --kind when active CLI supports it", async () => {
+    const cmds: string[] = []
+    const gw = new MockGateway({
+      "shell.exec": p => {
+        const cmd = p.command as string
+        if (/\bdiagnostics\b/.test(cmd)) return { stdout: "", stderr: "", code: 0 }
+        cmds.push(cmd)
+        if (/\bblock --help$/.test(cmd)) return { stdout: "usage: hermes kanban block [--kind KIND]", stderr: "", code: 0 }
+        return { stdout: "", stderr: "", code: 0 }
+      },
+    })
+    const t = await mountNode(<Kanban focused />, { gw, width: 180, height: 44 })
+    try {
+      await until(t, () => t.frame().includes("Kanban · 3 boards"))
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => /Status\s+ready/.test(t.frame()))
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Status for t1"))
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Block kind for t1"))
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Block t1"))
+      await act(async () => { await t.keys.typeText("need answer") })
+      act(() => t.keys.pressEnter())
+      await until(t, () => cmds.length === 2)
+      expect(cmds[0]).toBe("hermes kanban --board default block --help")
+      expect(cmds[1]).toBe("hermes kanban --board default block t1 'need answer' --kind needs_input")
+    } finally {
+      t.destroy()
+    }
+  })
+
+  test("status editor falls back to generic block when active CLI lacks --kind", async () => {
+    const cmds: string[] = []
+    const gw = new MockGateway({
+      "shell.exec": p => {
+        const cmd = p.command as string
+        if (/\bdiagnostics\b/.test(cmd)) return { stdout: "", stderr: "", code: 0 }
+        cmds.push(cmd)
+        if (/\bblock --help$/.test(cmd)) return { stdout: "usage: hermes kanban block task_id [reason ...] [--ids IDS]", stderr: "", code: 0 }
+        return { stdout: "", stderr: "", code: 0 }
+      },
+    })
+    const t = await mountNode(<Kanban focused />, { gw, width: 180, height: 44 })
+    try {
+      await until(t, () => t.frame().includes("Kanban · 3 boards"))
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => /Status\s+ready/.test(t.frame()))
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Status for t1"))
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("generic block"))
+      await act(async () => { await t.keys.typeText("need answer") })
+      act(() => t.keys.pressEnter())
+      await until(t, () => cmds.length === 2)
+      expect(cmds[0]).toBe("hermes kanban --board default block --help")
+      expect(cmds[1]).toBe("hermes kanban --board default block t1 'need answer'")
+    } finally {
+      t.destroy()
+    }
+  })
+
+  test("status editor sends dependency kind when active CLI supports typed blocks", async () => {
+    const cmds: string[] = []
+    const gw = new MockGateway({
+      "shell.exec": p => {
+        const cmd = p.command as string
+        if (/\bdiagnostics\b/.test(cmd)) return { stdout: "", stderr: "", code: 0 }
+        cmds.push(cmd)
+        if (/\bblock --help$/.test(cmd)) return { stdout: "usage: hermes kanban block [--kind KIND]", stderr: "", code: 0 }
+        return { stdout: "", stderr: "", code: 0 }
+      },
+    })
+    const t = await mountNode(<Kanban focused />, { gw, width: 180, height: 44 })
+    try {
+      await until(t, () => t.frame().includes("Kanban · 3 boards"))
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => /Status\s+ready/.test(t.frame()))
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Status for t1"))
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Block kind for t1"))
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => t.frame().includes("Block t1"))
+      await act(async () => { await t.keys.typeText("waiting on t3") })
+      act(() => t.keys.pressEnter())
+      await until(t, () => cmds.length === 2)
+      expect(cmds[1]).toBe("hermes kanban --board default block t1 'waiting on t3' --kind dependency")
+    } finally {
+      t.destroy()
+    }
+  })
+
   test("d → confirm → archive", async () => {
     const cmds: string[] = []
     const gw = new MockGateway({
@@ -766,8 +923,9 @@ describe("Kanban tab", () => {
     await until(t, () => /▸ More/.test(t.frame()))
     await act(async () => { await t.keys.typeText(" ") })   // expand
     await until(t, () => /Workspace/.test(t.frame()))
-    // more→tenant→workspace
+    // more→tenant→project→workspace
     act(() => t.keys.pressArrow("down")); await t.settle() // tenant
+    act(() => t.keys.pressArrow("down")); await t.settle() // project
     act(() => t.keys.pressArrow("down")); await t.settle() // workspace
     await until(t, () => /▸ Workspace/.test(t.frame()))
     await act(async () => { await t.keys.typeText(" ") })   // open workspace picker
@@ -784,6 +942,31 @@ describe("Kanban tab", () => {
     act(() => t.keys.pressEnter({ ctrl: true }))
     await until(t, () => cmds.length === 1)
     expect(cmds[0]).toBe("hermes kanban --board default create 'in a dir' --workspace dir:/tmp/work")
+    t.destroy()
+  })
+
+  test("create form: Project field feeds --project", async () => {
+    const cmds: string[] = []
+    const gw = new MockGateway({
+      "shell.exec": p => { if (!/\bdiagnostics\b/.test(p.command as string)) cmds.push(p.command as string); return { stdout: "tp", stderr: "", code: 0 } },
+    })
+    const t = await mountNode(<Kanban focused />, { gw, width: 180, height: 44 })
+    await until(t, () => t.frame().includes("Kanban · 3 boards"))
+    await act(async () => { await t.keys.typeText("n") })
+    await until(t, () => t.frame().includes("New Task"))
+    await act(async () => { await t.keys.typeText("linked task") })
+    await t.settle()
+    for (let i = 0; i < 5; i++) { act(() => t.keys.pressArrow("down")); await t.settle() }
+    await act(async () => { await t.keys.typeText(" ") })
+    await until(t, () => /Project/.test(t.frame()))
+    act(() => t.keys.pressArrow("down")); await t.settle()
+    act(() => t.keys.pressArrow("down")); await t.settle()
+    await until(t, () => /▸ Project/.test(t.frame()))
+    await act(async () => { await t.keys.typeText("herm") })
+    await t.settle()
+    act(() => t.keys.pressEnter({ ctrl: true }))
+    await until(t, () => cmds.length === 1)
+    expect(cmds[0]).toBe("hermes kanban --board default create 'linked task' --project herm")
     t.destroy()
   })
 
@@ -837,6 +1020,7 @@ describe("Kanban tab", () => {
     await act(async () => { await t.keys.typeText(" ") })   // expand
     await until(t, () => /Workspace/.test(t.frame()))
     act(() => t.keys.pressArrow("down")); await t.settle() // tenant
+    act(() => t.keys.pressArrow("down")); await t.settle() // project
     act(() => t.keys.pressArrow("down")); await t.settle() // workspace
     await act(async () => { await t.keys.typeText(" ") })   // open workspace picker
     await until(t, () => /isolated temp dir under the board root/.test(t.frame()))
@@ -1294,10 +1478,175 @@ describe("patchTask direct writes", () => {
     expect(read("t4")!.priority).toBe(0)
   })
 
+  test("kanban worker facade mirrors the service write contract", async () => {
+    const { patch } = await import("../src/io/kanban")
+    expect(await patch("default", "t4", { priority: 6 })).toBe(true)
+    expect(read("t4")!.priority).toBe(6)
+    expect(await patch("default", "missing-task", { priority: 6 })).toBe(false)
+  })
+
+  test("real kanban worker patches the sandbox board", async () => {
+    const prev = process.env.HERM_IO_INLINE
+    process.env.HERM_IO_INLINE = ""
+    // @ts-expect-error Bun query-string specifier creates a fresh module instance.
+    const fresh = await import("../src/io/kanban?worker") as typeof import("../src/io/kanban")
+    try {
+      expect(await fresh.patch("default", "t4", { priority: 8 })).toBe(true)
+      expect(read("t4")!.priority).toBe(8)
+    } finally {
+      fresh.close()
+      if (prev === undefined) delete process.env.HERM_IO_INLINE
+      else process.env.HERM_IO_INLINE = prev
+    }
+  })
+
+  test("write handle reopens when a board database is replaced", () => {
+    const root = hermesPath("kanban-replace")
+    const path = join(root, "kanban.db")
+    const old = `${path}.old`
+    mkdirSync(root, { recursive: true })
+    const seed = (priority: number) => {
+      const db = new Database(path, { create: true })
+      schema(db)
+      db.query("INSERT INTO tasks (id, title, status, priority, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run("replace-me", "Replace me", "ready", priority, now)
+      db.close()
+    }
+    try {
+      seed(0)
+      expect(patchAt(root, "default", "replace-me", { priority: 1 })).toBe(true)
+      renameSync(path, old)
+      seed(0)
+
+      expect(patchAt(root, "default", "replace-me", { priority: 7 })).toBe(true)
+      const db = new Database(path)
+      expect((db.query("SELECT priority FROM tasks WHERE id = ?").get("replace-me") as { priority: number }).priority).toBe(7)
+      db.close()
+    } finally {
+      resetWrites()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test("empty title rejected, unknown id returns false", async () => {
     const { patchTask } = await import("../src/service/hermes-kanban")
     expect(() => patchTask("default", "t4", { title: "   " })).toThrow(/empty/)
     expect(patchTask("default", "does-not-exist", { title: "x" })).toBe(false)
+  })
+
+  test("combined patch rolls back priority when title validation fails", () => {
+    const before = read("t4")!.priority
+    const count = events("t4").length
+    expect(() => patchAt(process.env.HERMES_HOME!, "default", "t4", { priority: 8, title: "   " }))
+      .toThrow(/empty/)
+    expect(read("t4")!.priority).toBe(before)
+    expect(events("t4")).toHaveLength(count)
+  })
+
+  const retries = () => {
+    const prev = process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS
+    process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS = "1"
+    return () => {
+      if (prev === undefined) delete process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS
+      else process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS = prev
+    }
+  }
+
+  test("default busy timeout does not stack application retries", async () => {
+    const { internals } = await import("../src/service/hermes-kanban")
+    const prev = process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS
+    delete process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS
+    const wait = spyOn(Atomics, "wait").mockImplementation((() => "timed-out") as never)
+    const sqls: string[] = []
+    const err = new Error("database is busy")
+    const conn = {
+      exec(sql: string) { sqls.push(sql); throw err },
+      query() { return { get: () => null } },
+    }
+    try {
+      expect(() => internals.writeTxn(conn as never, () => {})).toThrow(err)
+      expect(sqls).toEqual(["BEGIN IMMEDIATE"])
+      expect(wait).not.toHaveBeenCalled()
+    } finally {
+      wait.mockRestore()
+      if (prev === undefined) delete process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS
+      else process.env.HERMES_KANBAN_BUSY_TIMEOUT_MS = prev
+    }
+  })
+
+  test("BEGIN IMMEDIATE retries transient BUSY before running body", async () => {
+    const { internals } = await import("../src/service/hermes-kanban")
+    const restore = retries()
+    const waits: number[] = []
+    const wait = spyOn(Atomics, "wait").mockImplementation(((arr: Int32Array, idx: number, val: number, timeout?: number) => {
+      void arr; void idx; void val
+      waits.push(Number(timeout))
+      return "timed-out"
+    }) as never)
+    let body = 0
+    const sqls: string[] = []
+    const conn = {
+      exec(sql: string) {
+        sqls.push(sql)
+        if (sql === "BEGIN IMMEDIATE" && sqls.filter(s => s === sql).length === 1)
+          throw new Error("database is locked")
+      },
+      query() { return { get: () => null } },
+    }
+    try {
+      expect(internals.writeTxn(conn as never, () => { body++; return "ok" })).toBe("ok")
+      expect(body).toBe(1)
+      expect(sqls).toEqual(["BEGIN IMMEDIATE", "BEGIN IMMEDIATE", "COMMIT"])
+      expect(waits.length).toBe(1)
+      expect(waits[0]).toBeGreaterThanOrEqual(20)
+      expect(waits[0]).toBeLessThanOrEqual(150)
+    } finally { wait.mockRestore(); restore() }
+  })
+
+  test("COMMIT retries transient BUSY without replaying body", async () => {
+    const { internals } = await import("../src/service/hermes-kanban")
+    const restore = retries()
+    const wait = spyOn(Atomics, "wait").mockImplementation((() => "timed-out") as never)
+    let body = 0
+    const sqls: string[] = []
+    const conn = {
+      exec(sql: string) {
+        sqls.push(sql)
+        if (sql === "COMMIT" && sqls.filter(s => s === sql).length === 1)
+          throw new Error("database is busy")
+      },
+      query() { return { get: () => null } },
+    }
+    try {
+      internals.writeTxn(conn as never, () => { body++ })
+      expect(body).toBe(1)
+      expect(sqls).toEqual(["BEGIN IMMEDIATE", "COMMIT", "COMMIT"])
+    } finally { wait.mockRestore(); restore() }
+  })
+
+  test("persistent COMMIT BUSY rolls back and preserves original error", async () => {
+    const { internals } = await import("../src/service/hermes-kanban")
+    const restore = retries()
+    const wait = spyOn(Atomics, "wait").mockImplementation((() => "timed-out") as never)
+    let body = 0
+    const sqls: string[] = []
+    const err = new Error("database is busy")
+    const conn = {
+      exec(sql: string) {
+        sqls.push(sql)
+        if (sql === "COMMIT") throw err
+      },
+      query() { return { get: () => null } },
+    }
+    try {
+      expect(() => internals.writeTxn(conn as never, () => { body++ })).toThrow(err)
+      expect(body).toBe(1)
+      expect(sqls).toEqual([
+        "BEGIN IMMEDIATE",
+        "COMMIT", "COMMIT", "COMMIT", "COMMIT", "COMMIT", "COMMIT",
+        "ROLLBACK",
+      ])
+    } finally { wait.mockRestore(); restore() }
   })
 })
 
@@ -1516,6 +1865,30 @@ describe("Kanban diagnostics UI", () => {
     return JSON.stringify(byBoard[slug] ?? [])
   }
 
+  test("diagnostics refreshes serialize and collapse to the latest request", async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const gw = new MockGateway({
+      "shell.exec": async p => {
+        if (/\bdiagnostics\b/.test(p.command as string)) await gate
+        return { stdout: "[]", stderr: "", code: 0 }
+      },
+    })
+    const t = await mountNode(<Kanban focused />, { gw, width: 180, height: 44 })
+    const count = listBoards().length
+    const calls = () => gw.calls.filter(c => c.method === "shell.exec" && /\bdiagnostics\b/.test(String(c.params.command))).length
+    await until(t, () => calls() === count)
+
+    await act(async () => { await t.keys.typeText("rr") })
+    await t.settle()
+    expect(calls()).toBe(count)
+
+    release()
+    await until(t, () => calls() === count * 2)
+    expect(calls()).toBe(count * 2)
+    t.destroy()
+  })
+
   test("Card prefixes severity glyph; SidePane renders Diagnostics block + suggested action", async () => {
     const fixture = {
       default: [{
@@ -1627,26 +2000,27 @@ describe("scheduled status + new fields parity", () => {
     const db = new Database(hermesPath("kanban/boards/sched/kanban.db"), { create: true })
     schema(db)
     db.run("ALTER TABLE tasks ADD COLUMN branch_name TEXT")
+    db.run("ALTER TABLE tasks ADD COLUMN project_id TEXT")
     db.run("ALTER TABLE tasks ADD COLUMN model_override TEXT")
     db.run("ALTER TABLE tasks ADD COLUMN session_id TEXT")
     db.run("ALTER TABLE tasks ADD COLUMN last_heartbeat_at INTEGER")
     const ins = db.prepare(
       `INSERT INTO tasks (id, title, status, priority, created_at,
          started_at, workspace_kind, workspace_path, branch_name,
-         model_override, session_id, last_heartbeat_at, worker_pid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         project_id, model_override, session_id, last_heartbeat_at, worker_pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     // sch1: parked in scheduled, full set of new fields.
     ins.run("sch1", "delayed follow-up", "scheduled", 4, now - 300,
       null, "worktree", "/tmp/wt/sch1", "feat/delayed",
-      "anthropic/claude-sonnet-4", "sess-abc123", null, null)
+      "herm", "anthropic/claude-sonnet-4", "sess-abc123", null, null)
     // sch2: running with model + heartbeat.
     ins.run("sch2", "model-pinned worker", "running", 3, now - 60,
       now - 60, null, null, null,
-      "openrouter/qwen3-coder", null, now - 45, 9999)
+      null, "openrouter/qwen3-coder", null, now - 45, 9999)
     // sch3: plain ready task, exercises null-column fallback.
     ins.run("sch3", "vanilla", "ready", 1, now - 30,
-      null, null, null, null, null, null, null, null)
+      null, null, null, null, null, null, null, null, null)
     db.close()
     resetKanban()
   })
@@ -1661,6 +2035,7 @@ describe("scheduled status + new fields parity", () => {
     const row = b.get("scheduled")?.[0]
     expect(row?.id).toBe("sch1")
     expect(row?.branch_name).toBe("feat/delayed")
+    expect(row?.project_id).toBe("herm")
     expect(row?.model_override).toBe("anthropic/claude-sonnet-4")
     expect(row?.session_id).toBe("sess-abc123")
     expect(row?.workspace_kind).toBe("worktree")
@@ -1675,12 +2050,13 @@ describe("scheduled status + new fields parity", () => {
     // Schema-tolerance: vanilla task has all new fields null.
     const ready = b.get("ready")?.find(t => t.id === "sch3")
     expect(ready?.branch_name).toBeNull()
+    expect(ready?.project_id).toBeNull()
     expect(ready?.model_override).toBeNull()
     expect(ready?.session_id).toBeNull()
     expect(ready?.last_heartbeat_at).toBeNull()
   })
 
-  test("detail pane renders Branch / Model / Session for scheduled task", async () => {
+  test("detail pane renders Project / Branch / Model / Session for scheduled task", async () => {
     const t = await mountNode(<Kanban focused />, { width: 200, height: 60 })
     try {
       await until(t, () => /▾\s+sched/.test(t.frame()))
@@ -1698,9 +2074,35 @@ describe("scheduled status + new fields parity", () => {
       act(() => t.keys.pressEnter())
       await until(t, () => /Title\s+delayed follow-up/.test(t.frame()))
       const f = t.frame()
+      expect(f).toMatch(/Project\s+herm/)
       expect(f).toMatch(/Branch\s+feat\/delayed/)
       expect(f).toMatch(/Model\s+anthropic\/claude-sonnet-4/)
       expect(f).toMatch(/Session\s+sess-abc123/)
+    } finally {
+      t.destroy()
+    }
+  })
+
+  test("typed dependency and recurrence state render on cards and detail pane", async () => {
+    const db = new Database(hermesPath("kanban/boards/sched/kanban.db"))
+    db.run("UPDATE tasks SET block_kind = 'dependency', block_recurrences = 1 WHERE id = 'sch1'")
+    db.run("UPDATE tasks SET block_kind = 'capability', block_recurrences = 3 WHERE id = 'sch3'")
+    db.close()
+    resetKanban()
+
+    const t = await mountNode(<Kanban focused />, { width: 210, height: 60 })
+    try {
+      await until(t, () => /\[dep\]\s+delayed follow-up/.test(t.frame()))
+      expect(t.frame()).toMatch(/\[cap×3\]\s+vanilla/)
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressTab()); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("down")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressArrow("right")); await t.settle()
+      act(() => t.keys.pressEnter())
+      await until(t, () => /Status\s+scheduled · dependency-wait/.test(t.frame()))
     } finally {
       t.destroy()
     }

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, memo } from "react"
+import { useEffect, useRef, memo } from "react"
+import type { TextNodeRenderable } from "@opentui/core"
 import { STATE_FRAMES, type AvatarState } from "./states"
 import type { ParsedEikon, EikonState } from "./eikon"
 import { useTheme } from "../../theme"
@@ -21,6 +22,13 @@ import * as perf from "../../utils/perf"
  * this forward-only driver).
  */
 
+type PerfGlobal = typeof globalThis & {
+  __hermAvatarRenders?: number
+  __hermAvatarTimerStarts?: number
+}
+
+const maxLines = (frames: string[][]): number => frames.reduce((n, f) => Math.max(n, f.length), 0)
+
 export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
   state?: AvatarState
   eikon?: ParsedEikon
@@ -28,8 +36,10 @@ export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
    *  reaches its last frame. Consumer decides fallthrough policy. */
   onHold?: (state: AvatarState) => void
 }) => {
+  const g = globalThis as PerfGlobal
+  if (process.env.HERM_TEST_PERF === "1") g.__hermAvatarRenders = (g.__hermAvatarRenders ?? 0) + 1
   const theme = useTheme().theme
-  const [frame, setFrame] = useState(0)
+  const refs = useRef<Array<TextNodeRenderable | null>>([])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const holdRef = useRef(onHold); holdRef.current = onHold
 
@@ -37,27 +47,37 @@ export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
   const clip: EikonState = eikon?.resolve(signal) ?? eikon?.states.get(state) ?? STATE_FRAMES[state]
   const { frames, fps, loopFrom } = clip
   const count = frames.length
+  const lines = maxLines(frames)
+  const first = frames[0] ?? []
 
   const animate = prefs.usePref("animations") !== false
   const targetFps = prefs.usePref("targetFps") ?? 30
   const dt = 1000 / Math.max(1, Math.min(fps, targetFps))
 
   useEffect(() => {
+    const paint = (idx: number) => {
+      const frame = frames[Math.min(idx, count - 1)] ?? []
+      for (let i = 0; i < lines; i++) {
+        const node = refs.current[i]
+        if (node) node.children = [frame[i] ?? ""]
+      }
+    }
+
     if (timer.current) { clearTimeout(timer.current); timer.current = null }
-    setFrame(0)
+    paint(0)
     if (!animate || count < 2) return
     perf.count("avatar:timer:start")
-    if (process.env.HERM_TEST_PERF === "1") globalThis.__hermAvatarTimerStarts = (globalThis.__hermAvatarTimerStarts ?? 0) + 1
+    if (process.env.HERM_TEST_PERF === "1") g.__hermAvatarTimerStarts = (g.__hermAvatarTimerStarts ?? 0) + 1
     let idx = 0
 
     const tick = () => {
       perf.count("avatar:tick")
       idx++
       if (idx >= count) {
-        if (loopFrom >= count) { setFrame(count - 1); holdRef.current?.(state); return }
+        if (loopFrom >= count) { timer.current = null; paint(count - 1); holdRef.current?.(state); return }
         idx = loopFrom
       }
-      setFrame(idx)
+      paint(idx)
       timer.current = setTimeout(tick, dt)
     }
 
@@ -69,16 +89,14 @@ export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
         perf.count("avatar:timer:stop")
       }
     }
-  }, [state, count, loopFrom, animate, dt])
+  }, [state, frames, count, loopFrom, animate, dt, lines, g])
 
   const end = perf.mark("avatar:render")
-  const lines = frames[Math.min(frame, count - 1)] ?? []
-
   const result = (
     <box flexDirection="column">
-      {lines.map((line, i) => (
+      {Array.from({ length: lines }, (_, i) => (
         <text key={i}>
-          <span fg={theme.hermAvatar}>{line}</span>
+          <span ref={el => { refs.current[i] = el }} fg={theme.hermAvatar}>{first[i] ?? ""}</span>
         </text>
       ))}
     </box>

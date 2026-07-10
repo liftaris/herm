@@ -163,6 +163,41 @@ describe("DiffTabs", () => {
     t.destroy()
   })
 
+  test("strips friendly verb prefix only after args and diff headers miss", async () => {
+    const t = await mountNode(
+      <DiffTabs tools={[{
+        type: "tool", id: "p3", name: "patch", args: "",
+        preview: "Editing src/fallback.ts", status: "done", duration: 5,
+        diff: ["@@ -1 +1 @@", "-old", "+new"].join("\n"),
+      }]} />,
+      { width: 80, height: 14 },
+    )
+    await until(t, () => t.frame().includes("fallback.ts"))
+    expect(t.frame()).not.toContain("Editing")
+    t.destroy()
+  })
+
+  test("keeps args and diff header precedence over friendly preview", async () => {
+    const tools: ToolPart[] = [
+      {
+        type: "tool", id: "args", name: "patch",
+        args: JSON.stringify({ path: "src/from-args.ts" }),
+        preview: "Editing src/from-preview.ts", status: "done", duration: 5,
+        diff: udiff("src/from-diff.ts", "a"),
+      },
+      {
+        type: "tool", id: "diff", name: "patch", args: "",
+        preview: "Editing src/from-preview.ts", status: "done", duration: 5,
+        diff: udiff("src/from-diff.ts", "b"),
+      },
+    ]
+    const t = await mountNode(<DiffTabs tools={tools} />, { width: 100, height: 14 })
+    await until(t, () => t.frame().includes("from-args.ts") && t.frame().includes("from-diff.ts"))
+    expect(t.frame()).not.toContain("from-preview.ts")
+    expect(t.frame()).not.toContain("Editing")
+    t.destroy()
+  })
+
   test("sanitizes gateway CLI-rendered inline_diff (┊/summary/…/arrow-header)", async () => {
     // Actual shape gateway sends: display.py's _render_inline_unified_diff
     // REPLACES `--- a/` / `+++ b/` with `a/path → b/path` (one line),

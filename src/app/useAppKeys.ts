@@ -23,6 +23,7 @@ import { print as chordPrint } from "../keys/chord"
 import { isDegradedMouseInput } from "./mouseFilter"
 import type { ComposerHandle } from "../components/chat/Composer"
 import { isVoiceToggleKey } from "../voice/platform"
+import type { ToastContext } from "../ui/toast"
 import type { VoiceKey } from "../voice/types"
 
 const INTERRUPT_MS = 5000
@@ -43,6 +44,7 @@ type Opts = {
   focusRegion: Region
   setFocusRegion: (r: Region | ((r: Region) => Region)) => void
   streaming: boolean
+  starting: boolean
   dialogOpen: () => boolean
   composer: RefObject<ComposerHandle | null>
   /** Offer the key to a pending inline prompt card. Return true to
@@ -57,6 +59,7 @@ type Opts = {
   onQuit: () => void
   onQuitArm: (label: string) => void
   onCopyLast: () => void
+  onCopyToast: ToastContext["show"]
   onAttachClipboard: () => void
   /** Remove the last pending attachment (backspace on empty composer). */
   onDetachLast: () => boolean
@@ -112,7 +115,7 @@ export function useAppKeys(o: Opts) {
     // clears it (not the dialog, not the interrupt counter), Ctrl+C
     // copies it (not input.clear/app.exit), any other key clears it
     // unless the selection belongs to the focused textarea.
-    if (Selection.key(renderer, key)) { key.stopPropagation(); return }
+    if (Selection.key(renderer, key, { show: o.onCopyToast, clear: () => {}, error: () => {} })) { key.stopPropagation(); return }
 
     // oc parity: input_clear (ctrl+c) with non-empty buffer clears and
     // consumes; app_exit (also ctrl+c) fires on the next press. A draft
@@ -205,7 +208,7 @@ export function useAppKeys(o: Opts) {
     // Only meaningful mid-stream with something queued; otherwise fall
     // through (leader was already consumed, so no stray "u" reaches the
     // textarea).
-    if (keys.match("queue.flush", key) && o.streaming && o.queued > 0) {
+    if (keys.match("queue.flush", key) && (o.streaming || o.starting) && o.queued > 0) {
       o.onFlushQueue()
       key.stopPropagation()
       return
@@ -229,7 +232,7 @@ export function useAppKeys(o: Opts) {
         }
         c?.set(out)
         o.setFocusRegion("input")
-      })
+      }).catch((e: Error) => o.onNotice(e.message))
       return
     }
 
@@ -279,14 +282,14 @@ export function useAppKeys(o: Opts) {
       }
     }
 
-    // Popover owns up/down/tab/escape while open; stopPropagation keeps the
-    // textarea renderable from also moving the cursor on the same keypress.
+    // Popover owns up/down/tab/enter/escape while open; stopPropagation keeps
+    // the textarea renderable from also moving the cursor or submitting.
     // Structural — popover nav is composer-state, not a catalog action.
     if (c?.popOpen()) {
-      if (key.name === "escape") return c.popCancel()
+      if (key.name === "escape") { c.popCancel(); key.stopPropagation(); return }
       if (key.name === "up") { c.popNav(-1); key.stopPropagation(); return }
       if (key.name === "down") { c.popNav(1); key.stopPropagation(); return }
-      if (key.name === "tab") return c.popAccept()
+      if (key.name === "tab" || key.name === "return") { c.popAccept(); key.stopPropagation(); return }
       return
     }
 
@@ -313,8 +316,8 @@ export function useAppKeys(o: Opts) {
     }
 
     if (keys.match("session.interrupt", key)) {
-      if (!o.streaming && o.onEscape?.()) return
-      if (o.streaming) {
+      if (!o.streaming && !o.starting && o.onEscape?.()) return
+      if (o.streaming || o.starting) {
         const now = Date.now()
         if (now - lastEsc.current < INTERRUPT_MS) {
           o.onInterrupt()
@@ -354,13 +357,23 @@ export function useAppKeys(o: Opts) {
         key.stopPropagation()
         return
       }
-      if (key.name === "up") return void c?.historyUp()
-      if (key.name === "down") return void c?.historyDown()
-      // Backspace on an empty buffer with attachments → detach the last.
-      // Swallow before the textarea sees it so a subsequent backspace on
-      // a still-empty buffer keeps peeling attachments off, not chars.
+      if (key.name === "up") {
+        const before = c?.value()
+        const ok = c?.historyUp()
+        return void (ok && c?.value() !== before && key.stopPropagation())
+      }
+      if (key.name === "down") {
+        const before = c?.value()
+        const ok = c?.historyDown()
+        return void (ok && c?.value() !== before && key.stopPropagation())
+      }
+      // Backspace at a line start with attachments peels the last
+      // attachment. This lets the user detach while drafting without
+      // clearing the whole buffer first; mid-line backspace still edits
+      // text through the textarea.
       if (key.name === "backspace" && !key.ctrl && !key.meta
-          && c?.isEmpty() && o.onDetachLast()) {
+          && c && (c.isEmpty() || c.caret() === 0 || c.value()[c.caret() - 1] === "\n")
+          && o.onDetachLast()) {
         key.stopPropagation()
         return
       }

@@ -56,17 +56,30 @@ describe("editInEditor", () => {
     rmSync(script, { force: true })
   })
 
-  test("handles $EDITOR with args (split on space)", async () => {
-    // `sh -c 'printf hello > "$0"'` — $0 is the appended path arg.
-    process.env.VISUAL = ""
-    process.env.EDITOR = `sh -c printf\\ hello\\ >\\ "$0"`
-    // The split-on-space parsing won't survive escaped spaces; instead
-    // use a simple two-word form: `true foo` (editor that does nothing).
-    process.env.EDITOR = "true ignored-arg"
+  test("uses requested temp suffix", async () => {
+    const script = join(tmpdir(), `herm-fake-editor-suffix-${Date.now()}.sh`)
+    await Bun.write(script, `#!/bin/sh\ncase "$1" in *.txt) printf 'txt file' > "$1" ;; *) printf 'wrong' > "$1" ;; esac\n`)
+    await Bun.$`chmod +x ${script}`.quiet()
+    process.env.VISUAL = script
+
     const f = fake()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await editInEditor(f.renderer as any, "kept")
-    expect(out).toBe("kept") // editor was a no-op; seed survives round-trip
+    const out = await editInEditor(f.renderer as any, "seed", ".txt")
+    expect(out).toBe("txt file")
+
+    rmSync(script, { force: true })
+  })
+
+  test("honors quoted editor paths and arguments", async () => {
+    const script = join(tmpdir(), `herm fake editor ${Date.now()}.sh`)
+    await Bun.write(script, `#!/bin/sh\n[ "$1" = --flag ] || exit 2\nprintf 'quoted editor' > "$2"\n`)
+    await Bun.$`chmod +x ${script}`.quiet()
+    process.env.VISUAL = ""
+    process.env.EDITOR = `'${script}' --flag`
+    const f = fake()
+    const out = await editInEditor(f.renderer as never, "kept")
+    expect(out).toBe("quoted editor")
+    rmSync(script, { force: true })
   })
 
   test("empty result returns undefined", async () => {
@@ -83,5 +96,28 @@ describe("editInEditor", () => {
     expect(f.calls[f.calls.length - 1]).toBe("request")
 
     rmSync(script, { force: true })
+  })
+
+  test("missing editor restores the renderer before rejecting", async () => {
+    process.env.VISUAL = "definitely-missing-herm-editor"
+    delete process.env.EDITOR
+    const f = fake()
+
+    await expect(editInEditor(f.renderer as never, "seed")).rejects.toThrow("editor exited")
+    expect(f.calls).toEqual(["suspend", "clear", "clear", "resume", "request"])
+  })
+
+  test("initial buffer clear failure still resumes the renderer", async () => {
+    process.env.VISUAL = "/bin/true"
+    const f = fake()
+    let clears = 0
+    f.renderer.currentRenderBuffer.clear = () => {
+      f.calls.push("clear")
+      if (clears++ === 0) throw new Error("clear exploded")
+      return f.calls.length
+    }
+
+    await expect(editInEditor(f.renderer as never, "seed")).rejects.toThrow("clear exploded")
+    expect(f.calls).toEqual(["suspend", "clear", "clear", "resume", "request"])
   })
 })

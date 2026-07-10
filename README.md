@@ -98,42 +98,48 @@ discover, inspect, install, use, update, and remove.
 
 In Herm:
 
-- Open Eikon → Marketplace, or run `/marketplace`, to browse shared catalog
+- Open Eikon → Catalog, or run `/catalog`, to browse shared catalog
   entries.
 - Preview rows before installing. Trust is shown as `Verified`, `Unverified`,
   or `Mismatch` beside source and compatibility state.
 - Install adds the eikon to your local library without activating it.
 - Use selects an installed eikon as the active avatar.
+- Installing over the currently active eikon name also requires confirmation or
+  `--active-ok` because it replaces the active avatar's backing package.
 - Update or remove an active eikon only after confirming that the active
   avatar's backing package will change or be cleared.
 
 From the shell:
 
 ```bash
-herm eikon search [query]
-herm eikon inspect <name|github.com/user/repo/eikon-name|dir>
-herm eikon install <name|github.com/user/repo/eikon-name|dir>
-herm eikon use <name>
-herm eikon info <name>
-herm eikon update <name> --active-ok
-herm eikon remove <name> --active-ok
+herm eikon search [query] [--json]
+herm eikon browse [query] [--json]
+herm eikon inspect <name|url|dir> [--json]
+herm eikon install <name|url|dir> [--name N] [--no-source] [--active-ok] [--json]
+herm eikon list [--json]
+herm eikon use <name> [--json]
+herm eikon info <name> [--json]
+herm eikon update <name> [--active-ok] [--json]
+herm eikon remove <name> [--active-ok] [--json]
+herm eikon delist <name|id> [--json]
 ```
 
 `install` never activates. `use` is the activation action. JSON output is
 available for automation with `--json`.
 
-Default Marketplace installs fetch built package artifacts referenced by the
+Default Catalog installs fetch built package artifacts referenced by the
 catalog, not creator repositories. Direct GitHub installs are for sharing
 outside the default catalog and support both single-package repos and
 multi-eikon catalog repos addressed as `github.com/user/repo/eikon-name`.
 Private GitHub repos use normal git authentication.
 
 Creators can share Eikons through normal GitHub repositories. For official
-registry listing, use Eikon → Studio/Gallery → submit after baking. Herm previews
-the exact public bundle, asks for title/author/description/glyph, and either
-creates a GitHub PR through local `gh` auth or gives a browser/manual PR
-fallback with copyable bundle and PR text. Direct-install repos can still be
-prepared with upstream `eikon pack`, `eikon index`, and `eikon manifest`.
+registry listing, press `u` in Studio or use Library's Share to catalog action
+after baking. Herm previews metadata, the prepared public bundle, and the GitHub
+PR target; with local `gh` auth it creates the PR, otherwise it shows manual PR
+steps with the prepared bundle path and compare URL. Direct-install repos can
+still be prepared with upstream `eikon pack`, `eikon index`, and
+`eikon manifest`.
 `eikon publish` remains the lower-level GitHub PR contribution helper for the
 configured/default catalog repo; it is not a hosted marketplace account, upload,
 dashboard, or moderation flow.
@@ -141,7 +147,7 @@ dashboard, or moderation flow.
 Use `eikon.liftaris.dev` as a discovery gallery only; it previews catalog
 entries and gives copyable Herm install instructions.
 
-Herm owns native Marketplace behavior. The eikon repo owns the registry,
+Herm owns native Catalog behavior. The eikon repo owns the registry,
 browser mirror, shared catalog/player exports, install resolver, and publish
 preflight. Herm imports public eikon package exports rather than browser mirror
 internals or unexported source paths.

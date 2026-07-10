@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { act } from "react"
-import { mount, until } from "./harness"
+import { mount, until, MockGateway } from "./harness"
 import type { GatewayEvent } from "../src/context/wire"
 
 describe("prompts", () => {
@@ -104,6 +104,86 @@ describe("prompts", () => {
     await t.settle()
     expect(t.gw.last("sudo.respond")?.params).toMatchObject({ request_id: "su1", password: "" })
     expect(t.frame()).not.toContain("Sudo required")
+    t.destroy()
+  })
+
+  test("approval response failure keeps the card retryable", async () => {
+    let fail = true
+    const gw = new MockGateway({
+      "approval.respond": () => {
+        if (fail) throw new Error("approval wire down")
+        return { resolved: true }
+      },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => gw.push({ type: "approval.request", payload: { command: "rm x", description: "delete" } }))
+    await until(t, () => t.frame().includes("Permission required"))
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("approval wire down"))
+    expect(t.frame()).toContain("Permission required")
+
+    fail = false
+    act(() => t.keys.pressEnter())
+    await until(t, () => !t.frame().includes("Permission required"))
+    expect(gw.calls.filter(c => c.method === "approval.respond")).toHaveLength(2)
+    t.destroy()
+  })
+
+  test("clarify response failure keeps the question retryable", async () => {
+    let fail = true
+    const gw = new MockGateway({
+      "clarify.respond": () => {
+        if (fail) throw new Error("clarify wire down")
+        return { resolved: true }
+      },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => gw.push({
+      type: "clarify.request",
+      payload: { request_id: "q-retry", question: "retry choice?", choices: ["yes", "no"] },
+    }))
+    await until(t, () => t.frame().includes("retry choice?"))
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("clarify wire down"))
+    expect(t.frame()).toContain("retry choice?")
+
+    fail = false
+    act(() => t.keys.pressEnter())
+    await until(t, () => !t.frame().includes("Other (type your answer)"))
+    expect(t.frame()).not.toContain("clarify wire down")
+    expect(gw.calls.filter(c => c.method === "clarify.respond")).toHaveLength(2)
+    t.destroy()
+  })
+
+  test("secret response failure preserves the masked value for retry", async () => {
+    let fail = true
+    const gw = new MockGateway({
+      "secret.respond": () => {
+        if (fail) throw new Error("secret wire down")
+        return { resolved: true }
+      },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => gw.push({
+      type: "secret.request",
+      payload: { request_id: "s-retry", prompt: "token?", env_var: "TOKEN" },
+    }))
+    await until(t, () => t.frame().includes("Secret: TOKEN"))
+    await act(async () => { await t.keys.typeText("hunter2") })
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("secret wire down"))
+    expect(t.frame()).toContain("•".repeat(7))
+
+    fail = false
+    act(() => t.keys.pressEnter())
+    await until(t, () => !t.frame().includes("Secret: TOKEN"))
+    expect(gw.calls.filter(c => c.method === "secret.respond")).toHaveLength(2)
     t.destroy()
   })
 })

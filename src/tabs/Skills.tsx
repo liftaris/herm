@@ -176,6 +176,7 @@ const EmptyState = memo((props: { searching: boolean }) => {
 
 const HistoryPanel = memo((props: { focused: boolean }) => {
   const { theme, syntaxStyle } = useTheme();
+  const dialog = useDialog();
   const keys = useKeys();
   const follow = useFollow("skills-history");
   const [runs, setRuns] = useState<CuratorRun[]>(() => listCuratorRuns());
@@ -199,7 +200,7 @@ const HistoryPanel = memo((props: { focused: boolean }) => {
   }, []);
 
   useKeyboard(key => {
-    if (!props.focused) return;
+    if (!props.focused || dialog.open()) return;
     handleListKey(keys, key, {
       count: runs.length, setSel: moveSel, ...follow.opts,
       onActivate: () => setOpen(o => !o),
@@ -273,10 +274,13 @@ export const Skills = memo((props: { focused?: boolean }) => {
   const [sort, setSort] = useState<Sort>("name");
   const [history, setHistory] = useState(false);
   const seq = useRef(0);
+  const listSeq = useRef(0);
 
   const load = useCallback(() => {
+    const id = ++listSeq.current;
     gw.request<{ skills: Record<string, string[]> }>("skills.manage", { action: "list" })
       .then(res => {
+        if (listSeq.current !== id) return;
         const raw = res.skills ?? {};
         const rows: SkillInfo[] = Object.entries(raw).flatMap(([cat, names]) =>
           names.map(n => {
@@ -294,11 +298,14 @@ export const Skills = memo((props: { focused?: boolean }) => {
         rows.sort((a, b) => a.source.relative.localeCompare(b.source.relative));
         setSkills(rows);
       })
-      .catch(() => {});
-  }, [gw]);
+      .catch((err: Error) => {
+        if (listSeq.current === id) toast.show({ variant: "error", message: err.message });
+      });
+  }, [gw, toast]);
 
   useEffect(() => {
     load();
+    return () => { listSeq.current++; };
   }, [load]);
 
   // Hub search — debounced, drop stale responses via seq ref.
@@ -312,10 +319,14 @@ export const Skills = memo((props: { focused?: boolean }) => {
           setHits(r.results ?? []);
           setSelected(0);
         })
-        .catch(() => { if (seq.current === id) setHits([]) });
+        .catch((err: Error) => {
+          if (seq.current !== id) return;
+          setHits([]);
+          toast.show({ variant: "error", message: err.message });
+        });
     }, 150);
     return () => clearTimeout(t);
-  }, [gw, query, searching]);
+  }, [gw, toast, query, searching]);
 
   // Group installed skills by category. When sorted by "used", flatten
   // into a single "by-recency" group so the cross-category order is visible.

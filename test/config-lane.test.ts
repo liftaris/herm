@@ -54,6 +54,7 @@ describe("lane.toCliString", () => {
   })
   test("int truncates", () => {
     expect(toCliString("agent.max_turns", 90.7)).toBe("90")
+    expect(toCliString("gateway.platform_connect_timeout", 30.9)).toBe("30")
   })
   test("float preserves", () => {
     expect(toCliString("compression.threshold", 0.85)).toBe("0.85")
@@ -109,6 +110,27 @@ describe("lane.writeConfig", () => {
     expect(res.ok).toEqual([])
     expect(res.failed[0]).toMatchObject({ key: "model" })
     expect(res.failed[0].err).toContain("session busy")
+  })
+
+  test("tool progress live modes use verbose RPC alias", async () => {
+    const gw = mockGw({ "config.set": () => ({}) })
+    const res = await writeConfig(gw, [{ key: "display.tool_progress", to: "verbose" }])
+    expect(res).toEqual({ ok: ["display.tool_progress"], failed: [], warnings: [] })
+    expect(gw.calls).toEqual([
+      { method: "config.set", params: { key: "verbose", value: "verbose" } },
+    ])
+  })
+
+  test("tool progress log is never sent to verbose RPC alias", async () => {
+    const gw = mockGw({
+      "config.set": () => { throw new Error("should not call rpc") },
+    })
+    const res = await writeConfig(gw, [{ key: "display.tool_progress", to: "log" }])
+    expect(gw.calls).toEqual([])
+    expect(res.ok).toEqual([])
+    expect(res.failed).toEqual([
+      { key: "display.tool_progress", err: "log is a gateway-only config-file mode, not a live TUI mode" },
+    ])
   })
 })
 

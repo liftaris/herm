@@ -6,7 +6,7 @@ export function isDegradedMouseInput(key: { name?: string; raw?: string; sequenc
   return vals.some(v => typeof v === "string" && isDegradedMouseBlob(v))
 }
 
-export function isDegradedMouseBlob(text: string): boolean {
+function isDegradedMouseBlob(text: string): boolean {
   if (!text || /\s/.test(text)) return false
   return SGR_MOUSE_BLOB_RE.test(text) || SGR_MOUSE_RESIDUE_RE.test(text)
 }

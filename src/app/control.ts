@@ -71,7 +71,7 @@ const TAB_NAMES: readonly string[] = TABS.map(t => t.name)
 type Bridge = {
   tab: () => number
   setTab: (n: number) => void
-  send: (msg: string) => void
+  send: (msg: string) => Promise<void>
   ready: () => boolean
   streaming: () => boolean
   messages: () => number
@@ -88,6 +88,7 @@ type Bridge = {
 
 let bridge: Bridge | null = null
 let pendingTab: number | null = null
+let pendingSend = false
 
 export function setBridge(b: Bridge) {
   bridge = b
@@ -322,7 +323,15 @@ async function handle(req: Request): Promise<Response> {
     if (!body.message) return json({ error: "message required" }, 400)
     if (!bridge.ready()) return json({ error: "not connected" }, 503)
     if (bridge.streaming()) return json({ error: "already streaming" }, 409)
-    bridge.send(body.message)
+    if (pendingSend) return json({ error: "send already pending" }, 409)
+    pendingSend = true
+    try {
+      await bridge.send(body.message)
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : String(err) }, 502)
+    } finally {
+      pendingSend = false
+    }
     return json({ sent: true, message: body.message })
   }
 
@@ -560,6 +569,8 @@ async function handle(req: Request): Promise<Response> {
     ],
   }, 404)
 }
+
+export const internals = { handle }
 
 export function start() {
   if (!enabled) return

@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import { act } from "react"
-import { mount, until } from "./harness"
+import { previewStrategy } from "../src/utils/terminal-image"
+import { mount, mountNode, until } from "./harness"
+import { Composer } from "../src/components/chat/Composer"
+import { LOCAL_COMMANDS } from "../src/app/slashCommands"
 
 describe("composer: image attachments (D4+D7)", () => {
+  test("composer images use the shared preview strategy", () => {
+    expect(previewStrategy({ path: "/tmp/clip_1.png", exists: true, chafa: true })).toEqual({
+      kind: "chafa",
+      reason: "chafa-supported",
+    })
+  })
+
   test("Ctrl+V → clipboard.paste → chip renders; clears on send", async () => {
     const t = await mount({
       handlers: {
@@ -19,9 +29,10 @@ describe("composer: image attachments (D4+D7)", () => {
     await until(t, () => t.frame().includes("clip_1.png"))
 
     const f = t.frame()
-    expect(f).toContain(" img ")
-    expect(f).toContain("800×600")
-    expect(f).toContain("~1.1kt")
+    expect(f).not.toContain(" img ")
+    expect(f).not.toContain("800×600")
+    expect(f).not.toContain("~1.1kt")
+    expect(f).not.toContain("⌫ to detach")
     // stopPropagation: <input> didn't receive the literal "v"
     expect(f).not.toMatch(/> v\b/)
 
@@ -37,8 +48,8 @@ describe("composer: image attachments (D4+D7)", () => {
     // gateway's text-mode image routing owns the analysis-block prefix
     // without duplicating the path. See app.tsx:send for rationale.
     expect(t.gw.last("prompt.submit")?.params.text).toBe("describe this")
-    // Pre-send tray chip — the one with 800×600 dims — is gone.
-    await until(t, () => !t.frame().includes("800×600"))
+    // Pre-send tray metadata is gone.
+    await until(t, () => !t.frame().includes("~1.1kt"))
     // But the transcript MEDIA echo is visible: basename in the user turn.
     expect(t.frame()).toContain("clip_1.png")
     t.destroy()
@@ -59,7 +70,7 @@ describe("composer: image attachments (D4+D7)", () => {
     t.destroy()
   })
 
-  test("multiple attachments stack as separate chips", async () => {
+  test("multiple image attachments stay visible", async () => {
     let n = 0
     const t = await mount({
       handlers: {
@@ -110,7 +121,7 @@ describe("composer: image attachments (D4+D7)", () => {
     t.destroy()
   })
 
-  test("backspace with text in buffer edits text, doesn't detach", async () => {
+  test("backspace mid-text edits text, not attachments", async () => {
     const t = await mount({
       handlers: {
         "clipboard.paste": () => ({
@@ -130,6 +141,27 @@ describe("composer: image attachments (D4+D7)", () => {
     t.destroy()
   })
 
+  test("backspace at line start detaches even when composer has text", async () => {
+    const t = await mount({
+      handlers: {
+        "clipboard.paste": () => ({
+          attached: true, path: "/tmp/clip_1.png", name: "clip_1.png", count: 1,
+        }),
+      },
+    })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => t.keys.pressKey("v", { ctrl: true }))
+    await until(t, () => t.frame().includes("clip_1.png"))
+    await act(async () => { await t.keys.typeText("hi") })
+    act(() => t.keys.pressKey("HOME"))
+    await t.settle()
+
+    act(() => t.keys.pressBackspace())
+    await until(t, () => !t.frame().includes("clip_1.png"))
+    expect(t.frame()).toContain("hi")
+    t.destroy()
+  })
+
   test("Enter with empty buffer + attachment → sends empty prompt with image", async () => {
     const t = await mount({
       handlers: {
@@ -141,14 +173,17 @@ describe("composer: image attachments (D4+D7)", () => {
     })
     await until(t, () => t.frame().includes("Ready"))
     act(() => t.keys.pressKey("v", { ctrl: true }))
-    await until(t, () => t.frame().includes("⌫ to detach"))
+    await until(t, () => t.frame().includes("clip_1.png"))
+    expect(t.frame()).not.toContain("⌫ to detach")
     // Enter with no typed text — should still submit (gateway has the image).
     act(() => t.keys.pressEnter())
     await until(t, () => t.gw.last("prompt.submit") !== undefined)
     expect(t.gw.last("prompt.submit")?.params.text).toBe("")
-    // Pre-send tray is gone (detach hint disappears; chip still appears in
-    // the transcript MEDIA echo, which is expected).
-    await until(t, () => !t.frame().includes("⌫ to detach"))
+    // Pre-send tray is gone; chip still appears in the transcript MEDIA
+    // echo, which is expected.
+    act(() => t.gw.push({ type: "message.start" }))
+    act(() => t.gw.push({ type: "message.complete", payload: { status: "complete", text: "done" } }))
+    await until(t, () => t.frame().includes("Ready"))
     t.destroy()
   })
 
@@ -175,6 +210,71 @@ describe("composer: image attachments (D4+D7)", () => {
     act(() => t.keys.pressEnter())
     await t.settle()
     expect(t.gw.last("prompt.submit")).toBeUndefined()
+    t.destroy()
+  })
+
+  test("attachments render inside the composer border", async () => {
+    const t = await mount({
+      handlers: {
+        "clipboard.paste": () => ({
+          attached: true, path: "/tmp/inside.png", name: "inside.png",
+          count: 1, width: 640, height: 480,
+        }),
+      },
+    })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => t.keys.pressKey("v", { ctrl: true }))
+    await until(t, () => t.frame().includes("inside.png"))
+
+    const rows = t.frame().split("\n")
+    const top = rows.findIndex(l => l.startsWith("┌"))
+    const img = rows.findIndex(l => l.includes("inside.png"))
+    const bot = rows.findIndex((l, i) => i > top && l.startsWith("└"))
+    expect(top).toBeGreaterThan(-1)
+    expect(img).toBeGreaterThan(top)
+    expect(img).toBeLessThan(bot)
+    t.destroy()
+  })
+
+  test("path-backed non-image attachment renders only a file chip", async () => {
+    const t = await mountNode(
+      <box flexDirection="column" flexGrow={1} width="100%" height="100%">
+        <box flexGrow={1} />
+        <Composer
+          focused canSubmitPrompt={true} ready streaming={false} cmds={LOCAL_COMMANDS}
+          attachments={[{ attached: true, path: "/tmp/report.pdf", name: "report.pdf", count: 1 }]}
+          onSend={() => {}} onSlash={() => {}}
+        />
+      </box>,
+      { width: 120, height: 30 },
+    )
+    await until(t, () => t.frame().includes("report.pdf"))
+
+    expect(t.frame()).toContain(" file ")
+    expect(t.frame()).not.toContain(" img ")
+    t.destroy()
+  })
+
+  test("attachment overflow counts only attachments hidden from previews and chips", async () => {
+    const t = await mountNode(
+      <box flexDirection="column" flexGrow={1} width="100%" height="100%">
+        <box flexGrow={1} />
+        <Composer
+          focused canSubmitPrompt={true} ready streaming={false} cmds={LOCAL_COMMANDS}
+          attachments={[
+            { attached: true, path: "/tmp/one.pdf", name: "one.pdf", count: 1 },
+            { attached: true, path: "/tmp/two.txt", name: "two.txt", count: 2 },
+            { attached: true, path: "/tmp/three.png", name: "three.png", count: 3 },
+          ]}
+          onSend={() => {}} onSlash={() => {}}
+        />
+      </box>,
+      { width: 120, height: 30 },
+    )
+    await until(t, () => t.frame().includes("one.pdf") && t.frame().includes("two.txt"))
+
+    expect(t.frame()).toContain("three.png")
+    expect(t.frame()).not.toContain("+1")
     t.destroy()
   })
 })

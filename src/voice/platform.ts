@@ -5,7 +5,7 @@ import type { VoiceKey, VoiceMod } from "./types"
 import type { ParsedKey } from "@opentui/core"
 
 /** Documented default: Ctrl+B. */
-export const DEFAULT_VOICE_KEY: VoiceKey = {
+const DEFAULT_VOICE_KEY: VoiceKey = {
   mod: "ctrl",
   ch: "b",
   raw: "ctrl+b",

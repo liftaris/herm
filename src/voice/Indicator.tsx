@@ -2,7 +2,6 @@
 
 import { useTheme } from "../theme"
 import type { VoiceState } from "./types"
-import { formatVoiceRecordKey } from "./platform"
 
 type Props = { voice: VoiceState; keyLabel: string }
 

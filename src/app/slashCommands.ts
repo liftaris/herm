@@ -27,26 +27,6 @@ export type SlashCommand = {
 }
 
 /**
- * Names of purely client-side commands — intercepted before gateway dispatch.
- * These are always treated as local regardless of what the gateway returns.
- * Anything that must act on the *live* gateway session belongs here; the
- * slash-worker subprocess cannot service it.
- */
-export const LOCAL_NAMES = new Set([
-  "clear", "new", "theme", "help", "keys", "logs", "title",
-  "rollback", "save", "history", "status", "usage", "profile", "steer",
-  "reload", "reload-mcp", "reload-skills", "chafa", "splash", "skin",
-  // parity: session-mutating commands the slash-worker can't service
-  "resume", "branch", "compress", "undo", "redo", "retry", "model", "yolo", "quit",
-  "copy", "paste", "image", "background", "voice", "mouse", "redraw", "queue",
-  "stash",
-  // Ink-only UI toggles — local no-op with a note
-  "compact", "setup",
-  // browser: use browser.manage RPC, not slash.exec (issue #82)
-  "browser",
-])
-
-/**
  * Descriptions for locally-handled commands. Used to render them in the
  * popover when the gateway registry doesn't include them (or to override
  * the gateway's description for things like /new, which we intercept).
@@ -64,6 +44,7 @@ export const LOCAL_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "status",  description: "Version, model, paths",       category: "Info",   aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "usage",   description: "Credits, account status, tokens, context fill, cost", category: "Info", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "profile", description: "Active profile details",       category: "Info",   aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
+  { name: "journey", description: "Open the learning journey graph", category: "Info", aliases: ["learning", "memory-graph"], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "steer",   description: "Inject a note mid-turn (no interrupt)", category: "Session", aliases: [], argsHint: "[text]", subcommands: [], source: "local", target: "local" },
   { name: "reload-mcp", description: "Restart MCP servers & rediscover tools", category: "Session", aliases: [], argsHint: "[now|always]", subcommands: ["now", "always"], source: "local", target: "local" },
   { name: "reload", description: "Hot-reload ~/.hermes/.env (API keys)", category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
@@ -77,10 +58,24 @@ export const LOCAL_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "yolo",   description: "Toggle approval bypass",                 category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "quit",   description: "Exit herm",                             category: "Exit",    aliases: ["exit"], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "stash",  description: "Park the prompt (pop/list to restore)", category: "Client",  aliases: [], argsHint: "[pop|list]", subcommands: ["pop", "list"], source: "local", target: "local" },
+  { name: "undo",   description: "Remove the last conversation turn",     category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "redo",   description: "Re-send the last undone message",       category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
+  { name: "retry",  description: "Rewind and re-send the last user turn",  category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
+  { name: "setup", description: "Show setup guidance", category: "Client", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "branch", description: "Fork current conversation",              category: "Session", aliases: ["fork"], argsHint: "[name]", subcommands: [], source: "local", target: "local" },
+  { name: "compress", description: "Compress conversation context",         category: "Session", aliases: ["compact"], argsHint: "[here [N] | focus topic | --preview|--dry-run]", subcommands: [], source: "local", target: "local" },
   { name: "browser", description: "Connect/disconnect a CDP browser",      category: "Session", aliases: [], argsHint: "[connect|disconnect|status] [url]", subcommands: ["connect", "disconnect", "status"], source: "local", target: "local" },
 ]
+
+// These arrive from the gateway catalog but still execute in-process because
+// they mutate live TUI/session state that slash.exec cannot own.
+const INTERCEPT = ["save", "resume", "model", "copy", "paste", "image", "background", "mouse", "redraw"]
+
+/** Commands handled locally by app/slash.tsx and never forwarded to slash.exec. */
+export const LOCAL_NAMES = new Set([
+  ...LOCAL_COMMANDS.filter(command => command.target === "local").map(command => command.name),
+  ...INTERCEPT,
+])
 
 /** Filter commands by prefix (text after `/`). Searches names + aliases. */
 export function filter(list: ReadonlyArray<SlashCommand>, prefix: string): SlashCommand[] {

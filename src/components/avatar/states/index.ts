@@ -15,7 +15,7 @@ export type AvatarState =
 // is fixed-height so worst case is an empty pillar, not a crash.
 const BLANK: EikonState = { fps: 1, loopFrom: 1, frames: [[""]] };
 
-export const DEFAULT_EIKON = (() => {
+const DEFAULT_EIKON = (() => {
   try { return parseEikon(defaultEikonText) } catch { return undefined }
 })();
 

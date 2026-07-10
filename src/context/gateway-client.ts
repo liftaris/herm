@@ -145,14 +145,18 @@ export class GatewayClient extends EventEmitter {
     if (!env.TERMINAL_CWD) env.TERMINAL_CWD = cwd
     const pp = env.PYTHONPATH?.trim()
     env.PYTHONPATH = pp ? `${root}${delimiter}${pp}` : root
+    env.HERMES_PYTHON_SRC_ROOT = root
 
     // Reset state
     this.ok = false
     this.buf = []
     this.exit = undefined
 
-    if (this.proc) {
-      try { this.proc.kill() } catch {}
+    const previous = this.proc
+    if (previous) {
+      this.proc = null
+      this.fail(new Error("gateway restarted"))
+      try { previous.kill() } catch {}
     }
 
     if (this.timer) clearTimeout(this.timer)
@@ -160,20 +164,45 @@ export class GatewayClient extends EventEmitter {
       if (this.ok) return
       this.log(`[startup] timed out (python=${bin}, cwd=${cwd})`)
       this.push({ type: "gateway.start_timeout", payload: { cwd, python: bin } })
+      const proc = this.proc
+      if (!proc || proc.exitCode !== null) return
+      try { proc.kill() }
+      catch (err) {
+        this.proc = null
+        const failure = new Error(`gateway startup timeout: ${err instanceof Error ? err.message : String(err)}`)
+        this.fail(failure)
+        if (this.sub) this.emit("exit", null)
+        else this.exit = null
+      }
     }, STARTUP_MS)
 
-    const proc = Bun.spawn([bin, "-u", "-m", "tui_gateway.entry"], {
-      cwd,
-      env,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    })
+    const proc = (() => {
+      try {
+        return Bun.spawn([bin, "-u", "-m", "tui_gateway.entry"], {
+          cwd,
+          env,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+      } catch (err) {
+        if (this.timer) { clearTimeout(this.timer); this.timer = null }
+        this.proc = null
+        const message = err instanceof Error ? err.message : String(err)
+        this.log(`[startup] spawn failed: ${message}`)
+        this.push({ type: "gateway.stderr", payload: { line: message } })
+        if (this.sub) this.emit("exit", null)
+        else this.exit = null
+        return null
+      }
+    })()
+    if (!proc) return
     this.proc = proc
 
     // Read stdout lines — Bun returns ReadableStream
-    if (this.proc.stdout) {
-      lines(this.proc.stdout as ReadableStream<Uint8Array>, raw => {
+    if (proc.stdout) {
+      lines(proc.stdout as ReadableStream<Uint8Array>, raw => {
+        if (this.proc !== proc) return
         try {
           this.dispatch(JSON.parse(raw))
         } catch {
@@ -185,8 +214,9 @@ export class GatewayClient extends EventEmitter {
     }
 
     // Read stderr lines
-    if (this.proc.stderr) {
-      lines(this.proc.stderr as ReadableStream<Uint8Array>, raw => {
+    if (proc.stderr) {
+      lines(proc.stderr as ReadableStream<Uint8Array>, raw => {
+        if (this.proc !== proc) return
         const line = raw.trim()
         if (!line) return
         this.log(line)

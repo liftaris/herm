@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll } from "bun:test"
-import { mkdirSync, writeFileSync } from "fs"
+import { mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { count as tokenCount } from "../src/utils/tokens"
 import { readCronOutput } from "../src/service/hermes-home"
@@ -25,7 +25,7 @@ beforeAll(() => {
   // meaningful (a 3-char seed would slice to itself and hide bugs).
   writeFileSync(
     join(HH, "mem0.json"),
-    JSON.stringify({ api_key: "sk-abcdef1234567890", user_id: "test", foo: 42 }),
+    JSON.stringify({ api_key: "«redacted:sk-…»", user_id: "test", foo: 42 }),
   )
 })
 
@@ -87,5 +87,32 @@ describe("hermes-home readers", () => {
     expect(c!.headline).toBe("skills: curator pins important skills")
     expect(c!.body).toContain("config YAML merge")
     expect(c!.source.relative).toBe("herm/changelog.md")
+  })
+
+  test("env helpers normalize export-prefixed keys", async () => {
+    const { readEnvFile, writeEnvVar, removeEnvVar } = await import("../src/service/hermes-home")
+    writeFileSync(join(HH, ".env"), "export CAMOFOX_API_KEY=one\nSLACK_BOT_TOKEN=two\n")
+
+    expect(await readEnvFile()).toMatchObject({
+      CAMOFOX_API_KEY: "one",
+      SLACK_BOT_TOKEN: "two",
+    })
+
+    await writeEnvVar("CAMOFOX_API_KEY", "three")
+    expect(readFileSync(join(HH, ".env"), "utf8")).toContain("CAMOFOX_API_KEY=three")
+
+    await removeEnvVar("CAMOFOX_API_KEY")
+    expect(await readEnvFile()).not.toHaveProperty("CAMOFOX_API_KEY")
+  })
+
+  test("env catalog tracks upstream browser and messaging keys", async () => {
+    const { ENV_CATALOG } = await import("../src/service/hermes-home")
+    const keys = ENV_CATALOG.flatMap(g => g.keys)
+
+    for (const key of [
+      "BRV_API_KEY", "CAMOFOX_API_KEY", "HINDSIGHT_API_KEY",
+      "HINDSIGHT_API_URL", "RETAINDB_API_KEY", "RETAINDB_BASE_URL",
+      "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SUPERMEMORY_API_KEY",
+    ]) expect(keys).toContain(key)
   })
 })
