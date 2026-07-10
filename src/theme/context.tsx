@@ -64,7 +64,8 @@ export const ThemeProvider = ({
   // boot and the pref drives thereafter.
   const pref = preferences.usePref("theme")
   const modePref = preferences.usePref("themeMode")
-  const users = useMemo(() => userThemes(), [pref])
+  const rev = preferences.useRev()
+  const users = useMemo(() => userThemes(), [pref, rev])
   const names = useMemo(() => [...new Set([...THEME_NAMES, ...Object.keys(users)])].sort(), [users])
   const hasName = useCallback((name: string) => THEMES_SET.has(name) || users[name] !== undefined, [users])
   const active = pref && hasName(pref) ? pref : initial && hasName(initial) ? initial : DEFAULT_THEME

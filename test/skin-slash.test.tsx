@@ -4,7 +4,7 @@ import { join } from "path"
 import { act } from "react"
 import { mount, until, MockGateway } from "./harness"
 import * as prefs from "../src/context/preferences"
-import { matchSub, LOCAL_COMMANDS } from "../src/app/slashCommands"
+import { fallbacks, matchSub } from "../src/app/slashCommands"
 import { configDir } from "../src/utils/paths"
 import base from "../src/theme/themes/default.json"
 
@@ -131,7 +131,13 @@ describe("/skin", () => {
   })
 
   test("subcommand completion surfaces SKINS", () => {
-    const m = matchSub(LOCAL_COMMANDS, "/skin po")
+    const m = matchSub(fallbacks(), "/skin po")
     expect(m?.map(c => c.name)).toEqual(["skin poseidon"])
+  })
+
+  test("subcommand completion reads user skins at call time", () => {
+    local("zeta-skin")
+    const m = matchSub(fallbacks(), "/skin ze")
+    expect(m?.map(c => c.name)).toEqual(["skin zeta-skin"])
   })
 })

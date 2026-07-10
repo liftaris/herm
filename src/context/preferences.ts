@@ -102,6 +102,7 @@ import { configDir } from "../utils/paths"
 function configFile() { return join(configDir(), "tui.json") }
 
 let cached: TuiPreferences | null = null
+let rev = 0
 
 /** Test-only: drop the cached snapshot so the next load() re-reads disk. */
 export function reset(): void {
@@ -113,6 +114,7 @@ export function reset(): void {
  *  theme/eikon/keys follow the new profile. */
 export function reload(): void {
   cached = null
+  rev++
   for (const l of listeners) l()
 }
 
@@ -182,6 +184,7 @@ export function get<K extends keyof TuiPreferences>(key: K): TuiPreferences[K] {
 export function set<K extends keyof TuiPreferences>(key: K, value: TuiPreferences[K]): void {
   if (load()[key] === value) return
   save({ [key]: value } as Partial<TuiPreferences>)
+  rev++
   for (const l of listeners) l()
 }
 
@@ -199,6 +202,10 @@ function subscribe(l: () => void): () => void {
  */
 export function usePref<K extends keyof TuiPreferences>(key: K): TuiPreferences[K] {
   return useSyncExternalStore(subscribe, () => load()[key])
+}
+
+export function useRev(): number {
+  return useSyncExternalStore(subscribe, () => rev)
 }
 
 export * as prefs from "./preferences"

@@ -23,7 +23,6 @@ export type Field = {
 const SELECTS: Record<string, string[]> = {
   "terminal.backend": ["local", "docker", "ssh", "modal", "daytona", "singularity", "vercel_sandbox"],
   "tts.provider": ["edge", "elevenlabs", "openai", "neutts", "xai", "mistral"],
-  "display.skin": skins(),
   "logging.level": ["DEBUG", "INFO", "WARNING", "ERROR"],
   "agent.reasoning_effort": ["", "none", "minimal", "low", "medium", "high", "xhigh"],
   "agent.verify_on_stop": ["auto", "true", "false"],
@@ -49,7 +48,7 @@ const get = (obj: Record<string, unknown>, path: string): unknown => {
 
 const classify = (key: string, t: string): FieldType => {
   if (route(key).via === "readonly") return "readonly"
-  if (SELECTS[key]) return "select"
+  if (SELECTS[key] || key === "display.skin") return "select"
   if (t === "bool") return "boolean"
   if (t === "int" || t === "float") return "number"
   return "string"
@@ -79,7 +78,7 @@ export const buildFields = (user: Record<string, unknown>): Field[] => {
       set,
       doc: s.doc,
       effect: s.effect,
-      options: SELECTS[key],
+      options: key === "display.skin" ? skins() : SELECTS[key],
     })
     seen.add(key)
   }

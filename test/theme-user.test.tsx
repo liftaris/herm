@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
+import { tmpdir } from "os"
 import { act } from "react"
 import { testRender } from "@opentui/react/test-utils"
 import { RGBA } from "@opentui/core"
-import { mount, mountNode } from "./harness"
+import { mount, mountNode, until } from "./harness"
 import base from "../src/theme/themes/default.json"
 import { useTheme, ThemeProvider } from "../src/theme"
 import { configDir } from "../src/utils/paths"
@@ -35,6 +36,41 @@ describe("user themes", () => {
 
     expect(seen.names).toContain("local-tango")
     t.destroy()
+  })
+
+  test("preference reload refreshes themes when the saved name is unchanged", async () => {
+    const prior = { home: process.env.HERMES_HOME, cfg: process.env.HERM_CONFIG_DIR }
+    const a = mkdtempSync(join(tmpdir(), "herm-theme-a-"))
+    const b = mkdtempSync(join(tmpdir(), "herm-theme-b-"))
+    let t: Awaited<ReturnType<typeof mountNode>> | undefined
+    try {
+      delete process.env.HERM_CONFIG_DIR
+      for (const [root, name] of [[a, "alpha-theme"], [b, "beta-theme"]] as const) {
+        const dir = join(root, "herm")
+        mkdirSync(join(dir, "themes"), { recursive: true })
+        writeFileSync(join(dir, "tui.json"), JSON.stringify({ theme: "default" }))
+        writeFileSync(join(dir, "themes", `${name}.json`), JSON.stringify(base))
+      }
+      process.env.HERMES_HOME = a
+      prefs.reload()
+      let names: readonly string[] = []
+      t = await mountNode(<Probe seen={v => { names = v.names }} />)
+      expect(names).toContain("alpha-theme")
+
+      process.env.HERMES_HOME = b
+      prefs.reload()
+      await until(t, () => names.includes("beta-theme"))
+      expect(names).not.toContain("alpha-theme")
+    } finally {
+      t?.destroy()
+      if (prior.home === undefined) delete process.env.HERMES_HOME
+      else process.env.HERMES_HOME = prior.home
+      if (prior.cfg === undefined) delete process.env.HERM_CONFIG_DIR
+      else process.env.HERM_CONFIG_DIR = prior.cfg
+      prefs.reload()
+      rmSync(a, { recursive: true, force: true })
+      rmSync(b, { recursive: true, force: true })
+    }
   })
 
   test("themeMode preference selects the resolver mode", async () => {

@@ -10,7 +10,7 @@
  * otherwise "gateway" (forwarded as /{name} to the Hermes API).
  */
 
-import { skins } from "../context/skin"
+import { SKINS, skins } from "../context/skin"
 
 export type SlashSource = "command" | "skill" | "plugin" | "mcp" | "local"
 
@@ -52,7 +52,7 @@ export const LOCAL_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "chafa",  description: "Render image via chafa (demo)",       category: "Client",  aliases: [], argsHint: "<path>", subcommands: [], source: "local", target: "local" },
   { name: "splash", description: "Show the launch splash",              category: "Client",  aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
   { name: "goal",   description: "Set/control the session goal",        category: "Session", aliases: [], argsHint: "[text|done|pause|resume|clear|status]", subcommands: ["done", "pause", "resume", "clear", "status"], source: "command", target: "gateway" },
-  { name: "skin",   description: "Switch Hermes skin (+ theme + eikon)", category: "Client",  aliases: [], argsHint: "[name]", subcommands: skins(), source: "local", target: "local" },
+  { name: "skin",   description: "Switch Hermes skin (+ theme + eikon)", category: "Client",  aliases: [], argsHint: "[name]", subcommands: [...SKINS], source: "local", target: "local" },
   { name: "voice",  description: "Toggle voice recording",               category: "Client",  aliases: [], argsHint: "[on|off|status|tts]", subcommands: ["on", "off", "status", "tts"], source: "local", target: "local" },
   { name: "queue",  description: "Queue a prompt for the next idle turn", category: "Session", aliases: ["q"], argsHint: "[text]", subcommands: [], source: "local", target: "local" },
   { name: "yolo",   description: "Toggle approval bypass",                 category: "Session", aliases: [], argsHint: "", subcommands: [], source: "local", target: "local" },
@@ -66,6 +66,10 @@ export const LOCAL_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "compress", description: "Compress conversation context",         category: "Session", aliases: ["compact"], argsHint: "[here [N] | focus topic | --preview|--dry-run]", subcommands: [], source: "local", target: "local" },
   { name: "browser", description: "Connect/disconnect a CDP browser",      category: "Session", aliases: [], argsHint: "[connect|disconnect|status] [url]", subcommands: ["connect", "disconnect", "status"], source: "local", target: "local" },
 ]
+
+export function fallbacks(): ReadonlyArray<SlashCommand> {
+  return LOCAL_COMMANDS.map(c => c.name === "skin" ? { ...c, subcommands: skins() } : c)
+}
 
 // These arrive from the gateway catalog but still execute in-process because
 // they mutate live TUI/session state that slash.exec cannot own.

@@ -272,9 +272,10 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
         case "theme": {
           const name = arg.trim()
           if (!name) { openThemePicker(dialog, themeCtx); return }
-          if (name === "dark" || name === "light") {
-            themeCtx.setMode(name)
-            x.dispatch({ kind: "system", text: `theme mode → ${name}` })
+          const mode = name.toLowerCase()
+          if (mode === "dark" || mode === "light") {
+            themeCtx.setMode(mode)
+            x.dispatch({ kind: "system", text: `theme mode → ${mode}` })
             return
           }
           if (!themeCtx.set(name)) {

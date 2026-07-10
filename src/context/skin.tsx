@@ -37,6 +37,7 @@ export function skins(): string[] {
     .filter(e => e.isFile() && e.name.endsWith(".yaml"))
     .map(e => skin(join(dir, e.name)))
     .filter((name): name is string => name !== null && !(SKINS as readonly string[]).includes(name))
+    .sort()
   return [...SKINS, ...new Set(extra)]
 }
 
