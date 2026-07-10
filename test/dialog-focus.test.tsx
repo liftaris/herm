@@ -54,4 +54,20 @@ describe("DialogProvider focus restore", () => {
     act(() => probe.dialog.clear())
     await t.settle()
   })
+
+  test("context identity stays stable while its stack getter remains live", async () => {
+    await using t = await mountNode(<Probe />)
+    await t.settle()
+    const dialog = probe.dialog
+
+    act(() => dialog.replace(<text>stable context</text>))
+    await until(t, () => t.frame().includes("stable context"))
+    expect(probe.dialog).toBe(dialog)
+    expect(dialog.stack).toHaveLength(1)
+
+    act(() => dialog.clear())
+    await until(t, () => !t.frame().includes("stable context"))
+    expect(probe.dialog).toBe(dialog)
+    expect(dialog.stack).toHaveLength(0)
+  })
 })

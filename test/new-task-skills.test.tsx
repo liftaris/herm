@@ -40,6 +40,7 @@ async function walkToSkills(t: Awaited<ReturnType<typeof mountNode>>) {
   await act(async () => { await t.keys.typeText(" ") })
   await until(t, () => /More ▾/.test(t.frame()))
   await tab(); await until(t, () => /▸ Tenant/.test(t.frame()))
+  await tab(); await until(t, () => /▸ Project/.test(t.frame()))
   await tab(); await until(t, () => /▸ Workspace/.test(t.frame()))
   await tab(); await until(t, () => /▸ Runtime/.test(t.frame()))
   await tab(); await until(t, () => /▸ Skills/.test(t.frame()))

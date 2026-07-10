@@ -158,4 +158,36 @@ describe("Config → models category", () => {
     expect(cli[1]).toEqual(["config", "set", "auxiliary.vision.model", ""])
     t.destroy()
   })
+
+  test("late main-model assignment cannot replace a newer dialog", async () => {
+    let resolve!: (value: unknown) => void
+    const gate = new Promise(resolveGate => { resolve = resolveGate })
+    const gw = new MockGateway({
+      "config.get": () => ({ config: cfg }),
+      "model.options": () => ({
+        providers: [{ slug: "anthropic", name: "Anthropic", models: ["claude-opus-4.7"], total_models: 1 }],
+        provider: "openrouter", model: "anthropic/claude-opus-4.7",
+      }),
+      "config.set": () => gate,
+    })
+    const t = await mountNode(<Config focused />, { gw, width: 160, height: 40 })
+    await until(t, () => t.frame().includes("models (13)"))
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressTab())
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Set main model"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("claude-opus-4.7"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => gw.calls.some(c => c.method === "config.set"))
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Set main model"))
+    resolve({})
+    await gate
+    await t.settle()
+    expect(t.frame()).toContain("Set main model")
+    expect(t.frame()).not.toContain("Auxiliary models still pinned")
+    t.destroy()
+  })
 })

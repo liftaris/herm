@@ -11,11 +11,11 @@ export type ApprovalPrompt = ApprovalReq & {
 
 const group = "approval"
 
-export function question(req: ApprovalReq): string {
+function question(req: ApprovalReq): string {
   return (req.description || "Shell command").trim()
 }
 
-export function subject(req: ApprovalReq): string {
+function subject(req: ApprovalReq): string {
   if (req.pattern_keys?.length) return req.pattern_keys.join("|")
   return req.command.trim()
 }

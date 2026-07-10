@@ -15,12 +15,13 @@ import { hermesPath } from "../service/hermes-home"
 
 type Row = [string, string | undefined, RGBA?]
 
-const InfoDialog = (props: { title: string; rows: Row[]; lines?: string[]; note?: string }) => {
+const InfoDialog = (props: { title: string; rows: Row[]; lines?: string[]; note?: string; warning?: string }) => {
   const theme = useTheme().theme
   const body = props.rows.filter(r => r[1] !== undefined)
   return (
     <box flexDirection="column" minWidth={52} gap={1}>
       <box height={1}><text fg={theme.primary}><strong>{props.title}</strong></text></box>
+      {props.warning ? <text wrapMode="word" fg={theme.warning}>{props.warning}</text> : null}
       {props.lines?.length
         ? <box flexDirection="column">
             {props.lines.map((line, i) => (
@@ -53,7 +54,7 @@ export function openStatus(dialog: DialogContext, info: SessionInfo | null, sid:
       ["Tools",    `${nTools} in ${toolsets.length} toolset${toolsets.length === 1 ? "" : "s"}`],
       ["Skills",   String(Object.values(info?.skills ?? {}).reduce((n, v) => n + v.length, 0))],
       ["MCP",      mcp.length ? `${up}/${mcp.length} connected` : undefined],
-    ]} />,
+    ]} warning={info?.install_warning} />,
   )
 }
 

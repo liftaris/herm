@@ -29,6 +29,7 @@ type Verb = "run" | "pause" | "resume" | "list-archived" | "restore"
 
 const parseList = (stdout: string): string[] =>
   stdout.split("\n").map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith("("))
+const shq = (s: string) => /^[A-Za-z0-9._-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`
 
 const CuratorDialog = () => {
   const { theme, syntaxStyle } = useTheme()
@@ -40,6 +41,7 @@ const CuratorDialog = () => {
   const [report, setReport] = useState<CuratorReportInfo | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState<Verb | null>(null)
+  const busyRef = useRef<Verb | null>(null)
   const [archived, setArchived] = useState<string[]>([])
   const [mode, setMode] = useState<"report" | "archived">("report")
   const [sel, setSel] = useState(0)
@@ -53,14 +55,18 @@ const CuratorDialog = () => {
 
   const refreshArchived = useCallback(() => {
     gw.request<Sh>("shell.exec", { command: "hermes curator list-archived" })
-      .then(r => { if (r.code === 0) setArchived(parseList(r.stdout)) })
-      .catch(() => {})
-  }, [gw])
+      .then(r => {
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim())
+        setArchived(parseList(r.stdout))
+      })
+      .catch(e => toast.show({ variant: "error", message: trunc(e instanceof Error ? e.message : String(e), 120) }))
+  }, [gw, toast])
 
   useEffect(() => { refreshArchived() }, [refreshArchived])
 
   const sh = useCallback((verb: "run" | "pause" | "resume", ok: string) => {
-    if (busy) return
+    if (busyRef.current) return
+    busyRef.current = verb
     setBusy(verb)
     gw.request<Sh>("shell.exec", { command: `hermes curator ${verb}` })
       .then(r => {
@@ -69,13 +75,14 @@ const CuratorDialog = () => {
         home.invalidate("curatorState")
       })
       .catch((e: Error) => toast.show({ variant: "error", message: trunc(e.message, 120) }))
-      .finally(() => setBusy(null))
-  }, [gw, toast, busy])
+      .finally(() => { busyRef.current = null; setBusy(null) })
+  }, [gw, toast])
 
   const restore = useCallback((name: string) => {
-    if (busy) return
+    if (busyRef.current) return
+    busyRef.current = "restore"
     setBusy("restore")
-    gw.request<Sh>("shell.exec", { command: `hermes curator restore ${name}` })
+    gw.request<Sh>("shell.exec", { command: `hermes curator restore ${shq(name)}` })
       .then(r => {
         if (r.code !== 0) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim())
         toast.show({ variant: "success", message: `Restored ${name}` })
@@ -83,8 +90,8 @@ const CuratorDialog = () => {
         setSel(s => Math.max(0, s - 1))
       })
       .catch((e: Error) => toast.show({ variant: "error", message: trunc(e.message, 120) }))
-      .finally(() => setBusy(null))
-  }, [gw, toast, busy])
+      .finally(() => { busyRef.current = null; setBusy(null) })
+  }, [gw, toast])
 
   useKeyboard((key) => {
     if (mode === "archived") {

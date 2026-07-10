@@ -1,5 +1,5 @@
 import { act } from "react"
-import { describe, expect, test } from "bun:test"
+import { describe, test } from "bun:test"
 import { mount, until } from "./harness"
 
 describe("notification events", () => {

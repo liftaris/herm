@@ -6,13 +6,13 @@
 import { memo, useState } from "react"
 import { TextAttributes, type MouseEvent } from "@opentui/core"
 import { openFile } from "../../utils/open-file"
+import { image as imagePath } from "../../utils/terminal-image"
 import { useTheme } from "../../theme"
 
 // Ink's canonical regex. Match-per-line only — a MEDIA path is the
 // whole line, optionally wrapped in backticks/quotes by the model.
 export const MEDIA_LINE_RE = /^\s*[`"']?MEDIA:\s*(\S+?)[`"']?\s*$/
 
-const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"])
 const AUDIO_EXT = new Set(["mp3", "wav", "ogg", "m4a", "flac", "opus"])
 const VIDEO_EXT = new Set(["mp4", "webm", "mov", "mkv"])
 const IMG_RE = /!\[[^\]\n]*\]\(([^)\s]+)(?:\s+[^)]*)?\)/g
@@ -21,8 +21,8 @@ export type MediaKind = "img" | "audio" | "video" | "file" | "url"
 
 export function classify(path: string): MediaKind {
   if (/^https?:\/\//i.test(path)) return "url"
+  if (imagePath(path)) return "img"
   const ext = path.split(".").pop()?.toLowerCase() ?? ""
-  if (IMAGE_EXT.has(ext)) return "img"
   if (AUDIO_EXT.has(ext)) return "audio"
   if (VIDEO_EXT.has(ext)) return "video"
   return "file"
@@ -70,7 +70,7 @@ export function splitContent(text: string): Seg[] {
     let hit = false
     for (const img of line.matchAll(IMG_RE)) {
       const path = img[1]
-      if (classify(path) !== "img") continue
+      if (!imagePath(path)) continue
       if (!hit) flush()
       if (img.index > at) out.push({ md: line.slice(at, img.index) })
       out.push({ media: path })
@@ -97,6 +97,7 @@ export function splitContent(text: string): Seg[] {
 
 export const MediaChip = memo((props: {
   path: string
+  bare?: boolean
   /** Override the default open-file click. Handlers stopPropagation so
    *  the enclosing message's useClick (→ actions menu) never sees the
    *  down event. Pass to repurpose the chip (e.g. ChafaImage collapse). */
@@ -111,6 +112,21 @@ export const MediaChip = memo((props: {
   }[kind]
   const click = props.onMouseDown
     ?? ((e: MouseEvent) => { e.stopPropagation(); openFile(props.path) })
+  if (props.bare) return (
+    <box
+      flexDirection="row" height={1}
+      onMouseDown={click}
+      onMouseOver={() => setHover(true)}
+      onMouseOut={() => setHover(false)}
+    >
+      <text>
+        <span fg={theme.text}
+              attributes={hover ? TextAttributes.UNDERLINE : TextAttributes.NONE}>
+          {basename(props.path)}
+        </span>
+      </text>
+    </box>
+  )
   return (
     <box
       flexDirection="row" height={1}

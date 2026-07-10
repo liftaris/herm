@@ -1,10 +1,11 @@
 import { describe, test, expect } from "bun:test"
 import { act } from "react"
+import { TextAttributes } from "@opentui/core"
 import { mountNode, until, MockGateway } from "./harness"
 import { Sessions, fold } from "../src/tabs/Sessions"
 import type { SessionHit } from "../src/service/hermes-home"
 import type { SessionRow } from "../src/service/hermes-home"
-import type { PeekMsg } from "../src/service/sessions-db"
+import type { LineageInfo, PeekMsg } from "../src/service/sessions-db"
 import * as prefs from "../src/context/preferences"
 
 const ROWS = [
@@ -156,6 +157,29 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
+  test("session.title event patches the matching sidebar row", async () => {
+    const gw = new MockGateway({
+      "session.active_list": () => ({ sessions: [
+        { id: "live-past", session_key: "past", title: "Past Root", preview: "hello", message_count: 2, started_at: 1700000000, status: "idle" },
+      ]}),
+      "session.list": () => ({ sessions: [
+        { id: "past", title: "Past Root", preview: "hello", message_count: 2, started_at: 1700000000, source: "tui" },
+      ]}),
+    })
+    const disk = [detail({ id: "past", sessionSource: "tui", title: "Past Root", message_count: 2, started_at: 1700000000 })]
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, list: () => disk }} currentId="live-past" />, { gw, width: 120 })
+    await until(t, () => t.frame().includes("Sessions (1)") && t.frame().includes("Past Root"))
+
+    act(() => gw.push({
+      type: "session.title",
+      payload: { session_id: "live-past", title: "Generated Active" },
+    }))
+    await until(t, () => t.frame().includes("Generated Active"))
+
+    expect(t.frame()).not.toContain("Past Root")
+    t.destroy()
+  })
+
   test("lists from session.list RPC and switches on Enter", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
     let switched = ""
@@ -236,7 +260,7 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("sort: defaults to last-activity; Space toggles to started and persists", async () => {
+  test("sort: defaults to last-activity; S toggles to started and persists", async () => {
     prefs.reset()
     // "Older Start Fresh Activity" should top "active" sort;
     // "Newer Start Idle" should top "started" sort.
@@ -279,15 +303,20 @@ describe("Sessions tab", () => {
     expect(t.frame()).toContain("sort: active")
     expect(order()).toBe("fresh-first")
 
-    // toggle → started
+    // Space no longer sorts; s toggles → started
     await act(async () => { await t.keys.typeText(" ") })
+    await t.settle()
+    expect(t.frame()).toContain("Active ▾")
+    expect(order()).toBe("fresh-first")
+
+    await act(async () => { await t.keys.typeText("s") })
     await until(t, () => t.frame().includes("Start ▾"))
     expect(t.frame()).toContain("sort: started")
     expect(order()).toBe("idle-first")
     expect(prefs.get("sessions")?.sort).toBe("started")
 
     // toggle back
-    await act(async () => { await t.keys.typeText(" ") })
+    await act(async () => { await t.keys.typeText("s") })
     await until(t, () => t.frame().includes("Active ▾"))
     expect(order()).toBe("fresh-first")
     expect(prefs.get("sessions")?.sort).toBe("active")
@@ -296,7 +325,7 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("Space keeps sorting history while active sessions are pinned", async () => {
+  test("S keeps sorting history while active sessions are pinned", async () => {
     prefs.reset()
     const disk = [
       detail({ id: "older-fresh", sessionSource: "tui",
@@ -330,11 +359,11 @@ describe("Sessions tab", () => {
     }
 
     expect(t.frame()).toContain("sort: active")
-    expect(t.frame()).toContain("Space")
+    expect(t.frame()).toContain("[S] sort: active")
     expect(t.frame()).not.toContain("mouse")
     expect(order()).toBe("fresh-first")
 
-    await act(async () => { await t.keys.typeText(" ") })
+    await act(async () => { await t.keys.typeText("s") })
     await until(t, () => t.frame().includes("Start ▾"))
     expect(t.frame()).toContain("sort: started")
     expect(order()).toBe("idle-first")
@@ -435,6 +464,58 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
+  test("search failure renders inside the tab", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const search = async () => { throw new Error("search exploded") }
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, search }} />, { gw })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+
+    await act(async () => { await t.keys.typeText("/") })
+    await t.settle()
+    await act(async () => { await t.keys.typeText("needle") })
+    await until(t, () => t.frame().includes("search exploded"))
+    expect(t.frame()).toContain("Search Results")
+    t.destroy()
+  })
+
+  test("successful search clears the previous search error", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const search = async (query: string) => {
+      if (query === "needle") throw new Error("old search error")
+      return [{ session_id: "fresh", title: "Fresh result", snippet: "ok", role: "user", source: "tui", model: null, started_at: 1 }]
+    }
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, search }} />, { gw })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText("/") })
+    await t.settle()
+    await act(async () => { await t.keys.typeText("needle") })
+    await until(t, () => t.frame().includes("old search error"))
+    await act(async () => { await t.keys.typeText("2") })
+    await until(t, () => t.frame().includes("Fresh result"))
+    expect(t.frame()).not.toContain("old search error")
+    t.destroy()
+  })
+
+  test("failed search invalidates previous actionable results", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const search = async (query: string) => {
+      if (query === "ab") throw new Error("new search failed")
+      return [{ session_id: "stale", title: "Stale result", snippet: "old", role: "user", source: "tui", model: null, started_at: 1 }]
+    }
+    let switched = ""
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, search }} onSwitch={id => { switched = id }} />, { gw })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText("/") }); await t.settle()
+    await act(async () => { await t.keys.typeText("a") })
+    await until(t, () => t.frame().includes("Stale result"))
+    await act(async () => { await t.keys.typeText("b") })
+    await until(t, () => t.frame().includes("new search failed"))
+    expect(t.frame()).not.toContain("Stale result")
+    act(() => t.keys.pressEnter()); await t.settle()
+    expect(switched).toBe("")
+    t.destroy()
+  })
+
   test("d confirms then deletes via session.delete RPC and reloads", async () => {
     let listed = ROWS
     const gw = new MockGateway({
@@ -480,6 +561,21 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
+  test("current session cannot enter local-delete fallback when live listing is unavailable", async () => {
+    let local = 0
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const t = await mountNode(
+      <Sessions focused currentId="sid-a" io={{ ...NOIO, remove: () => (local++, true) }} />,
+      { gw },
+    )
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText("d") })
+    await t.settle()
+    expect(t.frame()).not.toContain("Delete Session?")
+    expect(local).toBe(0)
+    t.destroy()
+  })
+
   test("session.delete unavailable falls back to io.remove", async () => {
     const deleted: string[] = []
     let listed = ROWS
@@ -500,6 +596,38 @@ describe("Sessions tab", () => {
     await until(t, () => t.frame().includes("Sessions (1)"))
 
     expect(deleted).toEqual(["sid-a"])
+    t.destroy()
+  })
+
+  test("session.delete safety failure does not fall back to direct deletion", async () => {
+    const gw = new MockGateway({
+      "session.list": () => ({ sessions: ROWS }),
+      "session.delete": () => { throw new Error("could not enumerate active sessions") },
+    })
+    let local = 0
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText("d") })
+    await act(async () => { await t.keys.typeText("y") })
+    await until(t, () => t.frame().includes("could not enumerate active sessions"))
+
+    expect(local).toBe(0)
+    expect(t.frame()).toContain("Sessions (2)")
+    t.destroy()
+  })
+
+  test("session.delete timeout fails closed because server outcome is unknown", async () => {
+    const gw = new MockGateway({
+      "session.list": () => ({ sessions: ROWS }),
+      "session.delete": () => { throw new Error("timeout: session.delete") },
+    })
+    let local = 0
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText("d") })
+    await act(async () => { await t.keys.typeText("y") })
+    await until(t, () => t.frame().includes("timeout: session.delete"))
+    expect(local).toBe(0)
     t.destroy()
   })
 
@@ -715,10 +843,11 @@ describe("Sessions tab", () => {
 
 // ─── Tree expansion (herm-gsk.15) ────────────────────────────────────
 //
-// When a parent row has detail.subagent_count > 0, focusing it should
-// trigger io.subagents(parentId), render each child indented with "└─",
-// and let arrow keys traverse in/out of the child block. Only one
-// parent expands at a time; moving to another collapses the first.
+// When a parent row has detail.subagent_count > 0, Space on that
+// parent renders each child indented with "└─" and lets arrow keys
+// traverse in/out of the child block. Only one parent expands at a
+// time; moving to another hides the first until its parent is selected
+// again.
 
 describe("Sessions tab — tree expansion", () => {
   const PARENT = { id: "pid", title: "Parent with subs", preview: "", message_count: 3, started_at: 1700000000, source: "tui" }
@@ -739,30 +868,138 @@ describe("Sessions tab — tree expansion", () => {
     return []
   }
 
-  test("focusing a parent with subagents loads and renders children indented", async () => {
+  test("subagent query failure stays inside the tab error boundary", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
+    const io = {
+      ...NOIO,
+      list: listWithSubs,
+      subagents: async () => { throw new Error("children exploded") },
+    }
+    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 140, height: 30 })
+    await until(t, () => t.frame().includes("children exploded"))
+    expect(t.frame()).toContain("Parent with subs")
+    t.destroy()
+  })
+
+  test("subagent detail reads use bounded concurrency", async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => detail({
+      id: `parent-${i}`,
+      sessionSource: "tui",
+      title: `Parent ${i}`,
+      message_count: 1,
+      subagent_count: 1,
+    }))
+    let active = 0
+    let peak = 0
+    let calls = 0
+    const io = {
+      ...NOIO,
+      list: () => rows,
+      subagents: async () => {
+        calls++
+        active++
+        peak = Math.max(peak, active)
+        await Bun.sleep(5)
+        active--
+        return []
+      },
+    }
+    const t = await mountNode(<Sessions focused io={io} />)
+    await until(t, () => calls === rows.length && active === 0)
+    expect(peak).toBeLessThanOrEqual(8)
+    t.destroy()
+  })
+
+  test("late list results cannot replace a newer refresh", async () => {
+    const stale = [detail({ id: "stale", sessionSource: "tui", title: "Stale session", message_count: 2 })]
+    const fresh = [detail({ id: "fresh", sessionSource: "tui", title: "Fresh session", message_count: 2 })]
+    let release!: () => void
+    let calls = 0
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const list = async () => {
+      calls++
+      if (calls === 1) { await gate; return stale }
+      return fresh
+    }
+    const gw = new MockGateway({ "session.list": () => ({ sessions: [] }) })
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, list }} />, { gw, width: 140 })
+    await until(t, () => calls === 1)
+
+    await act(async () => { await t.keys.typeText("r") })
+    await until(t, () => t.frame().includes("Fresh session"))
+    release()
+    await gate
+    await t.settle()
+    expect(t.frame()).toContain("Fresh session")
+    expect(t.frame()).not.toContain("Stale session")
+    t.destroy()
+  })
+
+  test("wide detail mode expands subagents inline with Space, not in the detail pane", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
     const calls: string[] = []
     const io = { ...NOIO, list: listWithSubs, subagents: subsFor(calls) }
     const t = await mountNode(<Sessions focused io={io} />, { gw, width: 180, height: 30 })
     await until(t, () => t.frame().includes("Sessions (2)"))
 
-    // Selection starts on the first parent (pid) → children should load.
     await until(t, () => calls.includes("pid"))
-    await until(t, () => t.frame().includes("First subagent"))
-    const f = t.frame()
-    // Parent row unchanged, indented children below with "└─".
+    await t.settle()
+    let f = t.frame()
     expect(f).toContain("▸ Parent with subs")
+    expect(f).toContain("⎇ spawned 2 subagents")
+    expect(f).not.toContain("Sub sessions")
+    expect(f).not.toContain("First subagent")
+    expect(f).not.toContain("└─First subagent")
+    const row = f.split("\n").findIndex(l => l.includes("▸ Parent with subs"))
+    const span = (t.spans() as { lines: Array<{ spans: Array<{ text: string; attributes: number }> }> })
+      .lines[row].spans.find(s => s.text.includes("Parent with subs"))!
+    expect(span.attributes & TextAttributes.UNDERLINE).toBe(TextAttributes.UNDERLINE)
+
+    await act(async () => { await t.keys.typeText(" ") })
+    await until(t, () => t.frame().includes("└─First subagent"))
+    f = t.frame()
     expect(f).toContain("└─First subagent")
     expect(f).toContain("└─Second subagent")
-    // Header count still reflects PARENT rows only, not flat visible count.
+    expect(f).not.toContain("Sub sessions")
     expect(f).toContain("Sessions (2)")
+    t.destroy()
+  })
+
+  test("narrow mode keeps Space-expanded subagents inline and keyboard reachable", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
+    const io = { ...NOIO, list: listWithSubs, subagents: subsFor([]) }
+    let switched = ""
+    const t = await mountNode(
+      <Sessions focused io={io} onSwitch={sid => { switched = sid }} />,
+      { gw, width: 110, height: 30 },
+    )
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    expect(t.frame()).not.toContain("First subagent")
+
+    await act(async () => { await t.keys.typeText(" ") })
+    await until(t, () => t.frame().includes("First subagent"))
+
+    expect(t.frame()).not.toContain("Session Detail")
+    expect(t.frame()).toContain("▸ Parent with subs")
+    expect(t.frame()).toContain("└─First subagent")
+    expect(t.frame()).toContain("2 subs")
+
+    act(() => t.keys.pressArrow("down"))
+    await t.settle()
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Load session?"))
+    await act(async () => { await t.keys.typeText("y") })
+    await t.settle()
+    expect(switched).toBe("sub-1")
     t.destroy()
   })
 
   test("arrow down enters children, arrow up exits", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
     const io = { ...NOIO, list: listWithSubs, subagents: subsFor([]) }
-    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 180, height: 30 })
+    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 110, height: 30 })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText(" ") })
     await until(t, () => t.frame().includes("First subagent"))
 
     // ↓ once: selection moves onto the first child.
@@ -786,7 +1023,7 @@ describe("Sessions tab — tree expansion", () => {
     t.destroy()
   })
 
-  test("clicking a child row switches to that child session", async () => {
+  test("clicking an inline child switches to that child session", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
     const io = { ...NOIO, list: listWithSubs, subagents: subsFor([]) }
     let switched = ""
@@ -794,6 +1031,8 @@ describe("Sessions tab — tree expansion", () => {
       <Sessions focused io={io} onSwitch={sid => { switched = sid }} />,
       { gw, width: 180, height: 30 },
     )
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText(" ") })
     await until(t, () => t.frame().includes("First subagent"))
 
     const lines = t.frame().split("\n")
@@ -807,27 +1046,30 @@ describe("Sessions tab — tree expansion", () => {
     t.destroy()
   })
 
-  test("detail panel reflects the selected row (parent or child)", async () => {
+  test("detail panel follows the selected list row", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
     const io = { ...NOIO, list: listWithSubs, subagents: subsFor([]) }
     const t = await mountNode(<Sessions focused io={io} />, { gw, width: 200, height: 40 })
-    await until(t, () => t.frame().includes("First subagent"))
+    await until(t, () => t.frame().includes("Sessions (2)"))
 
-    // Parent selected → detail shows parent title.
     expect(t.frame()).toContain("Parent with subs")
-    // Move selection to first child.
     act(() => t.keys.pressArrow("down"))
     await t.settle()
-    // Detail panel should now render the child's title.
-    await until(t, () => t.frame().includes("First subagent"))
-    expect(t.frame()).toContain("First subagent")
+    await until(t, () => t.frame().includes("▸ Other parent"))
+    const lines = t.frame().split("\n")
+    const selected = lines.find(l => l.includes("▸ Other parent"))
+    const detail = lines.find(l => l.includes("Other parent") && !l.includes("▸"))
+    expect(selected).toBeDefined()
+    expect(detail).toBeDefined()
     t.destroy()
   })
 
   test("moving to a parent with no children shows no expansion", async () => {
     const gw = new MockGateway({ "session.list": () => ({ sessions: [PARENT, OTHER] }) })
     const io = { ...NOIO, list: listWithSubs, subagents: subsFor([]) }
-    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 180, height: 30 })
+    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 110, height: 30 })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText(" ") })
     await until(t, () => t.frame().includes("First subagent"))
 
     // Move all the way down to OTHER (3 steps: sub1, sub2, OTHER).
@@ -864,7 +1106,9 @@ describe("Sessions tab — tree expansion", () => {
       detail({ id: "cid", sessionSource: "tui", title: "Third parent",     message_count: 1, started_at: 1699998000 }),
     ]
     const io = { ...NOIO, list, subagents: subsFor([]) }
-    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 180, height: 30 })
+    const t = await mountNode(<Sessions focused io={io} />, { gw, width: 110, height: 30 })
+    await until(t, () => t.frame().includes("Sessions (3)"))
+    await act(async () => { await t.keys.typeText(" ") })
     await until(t, () => t.frame().includes("First subagent"))
 
     // sel=0 (PARENT) → ↓×3 = sub1, sub2, OTHER. Must NOT skip to THIRD.
@@ -881,8 +1125,10 @@ describe("Sessions tab — tree expansion", () => {
     let switched = ""
     const t = await mountNode(
       <Sessions focused io={io} onSwitch={sid => { switched = sid }} />,
-      { gw, width: 180, height: 30 },
+      { gw, width: 110, height: 30 },
     )
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    await act(async () => { await t.keys.typeText(" ") })
     await until(t, () => t.frame().includes("First subagent"))
 
     // Walk down through the children to OTHER, then back up one step.
@@ -891,9 +1137,9 @@ describe("Sessions tab — tree expansion", () => {
     expect(t.frame()).not.toContain("First subagent")
 
     act(() => t.keys.pressArrow("up")); await t.settle()
-    // Anchor moved to PARENT in the collapsed layout; expansion is
-    // derived from anchor, so PARENT re-expands with sel on itself —
-    // not its last child. Simpler than entering children from below.
+    // Anchor moved to PARENT in the collapsed layout; the Space-armed
+    // branch is visible again with sel on the parent — not its last
+    // child. Simpler than entering children from below.
     expect(t.frame()).toContain("▸ Parent with subs")
     expect(t.frame()).toContain("└─First subagent")
     act(() => t.keys.pressEnter())
@@ -953,6 +1199,7 @@ describe("Sessions tab — lineage block", () => {
     const t = await mountNode(<Sessions focused io={io} />, { gw, width: 200, height: 40 })
     await until(t, () => t.frame().includes("Parent with subs"))
     expect(t.frame()).toContain("⎇ spawned 2 subagents")
+    expect(t.frame()).not.toContain("Sub sessions")
     t.destroy()
   })
 
@@ -967,6 +1214,35 @@ describe("Sessions tab — lineage block", () => {
     expect(t.frame()).not.toContain("Lineage")
     expect(t.frame()).not.toContain("continues from")
     expect(t.frame()).not.toContain("compressed to")
+    t.destroy()
+  })
+
+  test("late lineage response cannot replace the selected session", async () => {
+    let release!: (info: LineageInfo) => void
+    const first = new Promise<LineageInfo>(resolve => { release = resolve })
+    const rows = [
+      detail({ id: "a", sessionSource: "tui", title: "A", message_count: 1 }),
+      detail({ id: "b", sessionSource: "tui", title: "B", message_count: 1 }),
+    ]
+    const lineage = (id: string) => id === "a" ? first : Promise.resolve({ continuesFrom: { id: "b-root", title: "B root" } })
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, list: () => rows, lineage }} />, { width: 200, height: 40 })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    act(() => t.keys.pressArrow("down"))
+    await until(t, () => t.frame().includes("B root"))
+
+    release({ continuesFrom: { id: "a-root", title: "stale A root" } })
+    await first
+    await t.settle()
+    expect(t.frame()).toContain("B root")
+    expect(t.frame()).not.toContain("stale A root")
+    t.destroy()
+  })
+
+  test("lineage failure stays visible in the detail pane", async () => {
+    const rows = [detail({ id: "a", sessionSource: "tui", title: "A", message_count: 1 })]
+    const lineage = async () => { throw new Error("lineage unavailable") }
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, list: () => rows, lineage }} />, { width: 200, height: 40 })
+    await until(t, () => t.frame().includes("lineage unavailable"))
     t.destroy()
   })
 
@@ -1099,6 +1375,32 @@ describe("Sessions tab — transcript peek", () => {
     await until(t, () => t.frame().includes("(no local transcript)"))
     expect(calls).toContain("sid-b")
     expect(t.frame()).not.toContain("alpha content here")
+    t.destroy()
+  })
+
+  test("late peek response cannot replace the selected session", async () => {
+    let release!: (rows: PeekMsg[]) => void
+    const first = new Promise<PeekMsg[]>(resolve => { release = resolve })
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const peek = (sid: string) => sid === "sid-a" ? first : Promise.resolve([pm("user", "beta content")])
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, peek }} />, { gw, width: 200, height: 50 })
+    await until(t, () => t.frame().includes("Sessions (2)"))
+    act(() => t.keys.pressArrow("down"))
+    await until(t, () => t.frame().includes("beta content"))
+
+    release([pm("user", "stale alpha content")])
+    await first
+    await t.settle()
+    expect(t.frame()).toContain("beta content")
+    expect(t.frame()).not.toContain("stale alpha content")
+    t.destroy()
+  })
+
+  test("peek failure stays visible in the detail pane", async () => {
+    const gw = new MockGateway({ "session.list": () => ({ sessions: ROWS }) })
+    const peek = async () => { throw new Error("transcript unavailable") }
+    const t = await mountNode(<Sessions focused io={{ ...NOIO, peek }} />, { gw, width: 200, height: 50 })
+    await until(t, () => t.frame().includes("transcript unavailable"))
     t.destroy()
   })
 

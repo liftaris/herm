@@ -1,7 +1,8 @@
 import { describe, test, expect } from "bun:test"
 import { act } from "react"
-import { mountNode } from "./harness"
-import { Context, contextMeter } from "../src/tabs/Context"
+import { mountNode, until, MockGateway } from "./harness"
+import { Context, contextBreakdown, contextMeter, remoteSegments } from "../src/tabs/Context"
+import { build } from "../src/service/context-segments"
 import type { SessionInfo } from "../src/context/wire"
 import type { Message, Usage } from "../src/types/message"
 import type { HermesConfig } from "../src/service/hermes-home"
@@ -69,6 +70,67 @@ describe("Context tab", () => {
     expect(f).toContain("Context · 12k / 100k (12%)")
     expect(f).not.toContain("90k / 100k")
     expect(f).toContain("Free — 88k")
+    t.destroy()
+  })
+
+  test("maps session.context_breakdown categories to context segments", () => {
+    const remote = contextBreakdown({
+      categories: [
+        { id: "tool_definitions", label: "Tool definitions", tokens: 2000, color: "red" },
+        { id: "mcp", label: "MCP", tokens: 500, color: "blue" },
+        { id: "conversation", label: "Conversation", tokens: 1000, color: "green" },
+      ],
+      context_max: 20_000,
+      context_percent: 25,
+      context_used: 5000,
+      estimated_total: 3500,
+      model: "test",
+    })
+    expect(remote).not.toBeNull()
+    const local = build({ contextLength: 20_000, usedTokens: 5000, sections: [], conversationTokens: 1, tools: [] })
+    const got = remoteSegments(remote!, local)
+    expect(got.map(s => s.id)).toEqual(["system_tools", "mcp_tools", "conversation", "unknown", "free"])
+    expect(got.find(s => s.id === "system_tools")?.tokens).toBe(2000)
+    expect(got.find(s => s.id === "mcp_tools")?.tokens).toBe(500)
+    expect(got.find(s => s.id === "unknown")?.tokens).toBe(1500)
+    expect(got.find(s => s.id === "free")?.tokens).toBe(15_000)
+  })
+
+  test("uses session.context_breakdown payload when available", async () => {
+    const gw = new MockGateway({
+      "session.context_breakdown": () => ({
+        categories: [
+          { id: "tool_definitions", label: "Tool definitions", tokens: 2000, color: "red" },
+          { id: "mcp", label: "MCP", tokens: 500, color: "blue" },
+          { id: "conversation", label: "Conversation", tokens: 1000, color: "green" },
+        ],
+        context_max: 20_000,
+        context_percent: 25,
+        context_used: 5000,
+        estimated_total: 3500,
+        model: "test",
+      }),
+    })
+    const t = await mountNode(<Context info={{ session_id: "s1", model: "test", context_max: 10_000, context_used: 1000 }} />, { gw })
+    await until(t, () => strip(t.frame()).includes("Context · 5.0k / 20k (25%)"))
+    const f = strip(t.frame())
+    expect(gw.last("session.context_breakdown")?.params).toEqual({ session_id: "s1" })
+    expect(f).toContain("Context · 5.0k / 20k (25%)")
+    expect(f).toContain("System Tools — 2.0k")
+    expect(f).toContain("MCP Tools — 500")
+    expect(f).toContain("Conversation — 1.0k")
+    expect(f).toContain("Free — 15k")
+    t.destroy()
+  })
+
+  test("falls back to local estimate when context_breakdown errors", async () => {
+    const gw = new MockGateway({ "session.context_breakdown": () => { throw new Error("old gateway") } })
+    const t = await mountNode(<Context info={{ session_id: "s1", model: "test", context_max: 10_000, context_used: 1000 }} />, { gw })
+    await until(t, () => gw.last("session.context_breakdown") !== undefined)
+    const f = strip(t.frame())
+    expect(gw.last("session.context_breakdown")?.params).toEqual({ session_id: "s1" })
+    expect(f).toContain("Context · 1.0k / 10k (10%)")
+    expect(f).toContain("Free — 9.0k")
     t.destroy()
   })
 

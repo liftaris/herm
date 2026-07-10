@@ -40,6 +40,27 @@ describe("schema", () => {
     expect(SCHEMA["kanban.max_in_progress_per_profile"].doc).toContain("positive int")
   })
 
+  test("web extract char limit parity key is present", () => {
+    expect(SCHEMA["web.extract_char_limit"]).toMatchObject({
+      type: "int",
+      default: 15000,
+      group: "web",
+    })
+  })
+
+  test("upstream 05cbddc config keys are present", () => {
+    expect(SCHEMA["display.timestamp_format"]).toMatchObject({
+      type: "str",
+      default: "%H:%M",
+      group: "display",
+    })
+    expect(SCHEMA["secrets.onepassword.enabled"]).toMatchObject({
+      type: "bool",
+      default: false,
+      group: "secrets",
+    })
+  })
+
   test("group is first dotted segment (or 'general' for root keys)", () => {
     for (const k of SCHEMA_KEYS) {
       const want = k.includes(".") ? k.split(".")[0] : "general"
@@ -63,5 +84,22 @@ describe("schema", () => {
   test("docs captured for commented leaves", () => {
     expect(SCHEMA["agent.gateway_timeout"].doc.length).toBeGreaterThan(20)
     expect(SCHEMA["compression.threshold"].doc.length).toBeGreaterThan(5)
+  })
+
+  test("upstream config/env refresh keys are present", () => {
+    for (const k of [
+      "moa.save_traces",
+      "moa.trace_dir",
+      "gateway.restart_loop_guard.max_restarts",
+      "gateway.restart_loop_guard.window_seconds",
+      "browser.allow_unsafe_evaluate",
+      "vertex.project_id",
+      "vertex.region",
+      "discord.bots_require_inline_mention",
+    ]) expect(SCHEMA[k], k).toBeDefined()
+
+    expect(SCHEMA["custom_providers"]).toMatchObject({ type: "dict" })
+    expect(SCHEMA["providers"]).toMatchObject({ type: "dict" })
+    expect(SCHEMA["prompt_caching.enabled"]).toBeUndefined()
   })
 })

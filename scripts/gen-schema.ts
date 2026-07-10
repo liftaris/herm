@@ -11,7 +11,7 @@
  * this script doesn't re-implement a Python parser. Output is a committed
  * .ts file — regenerate with `bun scripts/gen-schema.ts` after an agent pull.
  */
-import { existsSync, mkdirSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 
 const HOME = process.env.HOME!
@@ -30,6 +30,8 @@ if (!agentRoot) {
   process.exit(1)
 }
 const configPy = join(agentRoot, "hermes_cli", "config.py")
+const src = readFileSync(configPy, "utf8")
+const tls = src.includes("ssl_ca_cert") && src.includes("ssl_verify")
 const sha = (() => {
   const p = Bun.spawnSync(["git", "-C", agentRoot, "rev-parse", "--short", "HEAD"])
   return p.exitCode === 0 ? new TextDecoder().decode(p.stdout).trim() : "unknown"
@@ -160,7 +162,7 @@ const extracted = JSON.parse(new TextDecoder().decode(proc.stdout)) as {
 
 /** Keys read by the agent that aren't in DEFAULT_CONFIG (user-adds-only). */
 const EXTRA: Record<string, { type: string; default: unknown; doc: string }> = {
-  custom_providers: { type: "dict", default: {}, doc: "OpenAI-compatible provider definitions keyed by name." },
+  custom_providers: { type: "dict", default: {}, doc: `OpenAI-compatible provider definitions keyed by name.${tls ? " Entries support ssl_ca_cert and ssl_verify." : ""}` },
   mcp_servers: { type: "dict", default: {}, doc: "MCP server definitions keyed by name." },
   fallback_model: { type: "dict", default: null, doc: "Fallback model (dict) or chain (list of dicts) for provider failover." },
   "agent.reasoning_effort": { type: "str", default: "", doc: "Reasoning effort for the main agent: none | minimal | low | medium | high | xhigh." },
@@ -212,6 +214,9 @@ for (const [k, v] of Object.entries({ ...extracted.entries, ...EXTRA })) {
     effect: effectOf(k),
   }
 }
+
+if (tls && all.providers)
+  all.providers.doc = "Provider definitions keyed by name. Custom/OpenAI-compatible entries support ssl_ca_cert and ssl_verify."
 
 const keys = Object.keys(all).sort()
 

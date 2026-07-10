@@ -2,7 +2,7 @@
 //
 // Layout: a vertical form. Fields top-to-bottom: Title (input), Body
 // (textarea), Assignee / Priority / Triage always visible; Tenant /
-// Workspace / Max runtime / Skills live under a collapsed "More"
+// Project / Workspace / Max runtime / Skills live under a collapsed "More"
 // section ('m' toggles).
 //
 // Navigation:
@@ -57,6 +57,7 @@ export type Draft = {
   parent: string | null
   triage: boolean
   tenant: string | null
+  project: string | null
   workspace: Workspace
   maxRuntime: string | null
   skills: string[]
@@ -78,10 +79,10 @@ export function openCreateTask(
 // Visible-field identifiers. "More" is the collapsible header row.
 type Field =
   | "title" | "body" | "assignee" | "priority" | "triage"
-  | "more" | "tenant" | "workspace" | "maxRuntime" | "skills"
+  | "more" | "tenant" | "project" | "workspace" | "maxRuntime" | "skills"
 
 const CORE: Field[] = ["title", "body", "assignee", "priority", "triage", "more"]
-const MORE: Field[] = ["tenant", "workspace", "maxRuntime", "skills"]
+const MORE: Field[] = ["tenant", "project", "workspace", "maxRuntime", "skills"]
 
 // Fields that open a picker on Space.
 const SELECTY: ReadonlySet<Field> = new Set(["assignee", "priority", "workspace"])
@@ -129,6 +130,7 @@ const Form = (p: {
   const [priority, setPriority] = useState(0)
   const [triage, setTriage] = useState(false)
   const [tenant, setTenant] = useState("")
+  const [project, setProject] = useState("")
   const [workspace, setWorkspace] = useState<Workspace>({ kind: "scratch" })
   const [maxRuntime, setMaxRuntime] = useState("")
 
@@ -190,6 +192,7 @@ const Form = (p: {
       parent: p.parent?.id ?? null,
       triage,
       tenant: tenant.trim() || null,
+      project: project.trim() || null,
       workspace,
       maxRuntime: maxRuntime.trim() || null,
       skills,
@@ -542,12 +545,13 @@ const Form = (p: {
         </box>
         {!more ? (
           <box flexGrow={1} height={1} overflow="hidden">
-            <text fg={theme.textMuted}>tenant · workspace · runtime · skills</text>
+            <text fg={theme.textMuted}>tenant · project · workspace · runtime · skills</text>
           </box>
         ) : null}
       </box>
 
       {more ? textRow("tenant", "Tenant", tenant, setTenant, "namespace (optional)") : null}
+      {more ? textRow("project", "Project", project, setProject, "id/slug (optional)") : null}
       {more ? valRow("workspace", "Workspace", wsLabel(workspace), "Space pick ▾") : null}
       {more ? textRow("maxRuntime", "Runtime", maxRuntime, setMaxRuntime, "e.g. 30m, 2h, 1800 (optional)") : null}
       {more ? skillsRows() : null}

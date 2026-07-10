@@ -47,7 +47,7 @@ export type PromptPart = {
   id: string
   variant: "approval" | "clarify" | "sudo" | "secret"
   req: PromptReq
-  answered?: { label: string; ok: boolean; at: number }
+  answered?: { label: string; ok: boolean; at: number; question?: string }
 }
 
 export type PromptReq =
@@ -62,6 +62,7 @@ export type Usage = {
   input: number
   output: number
   total: number
+  active_subagents?: number
   // Context-compression fields — populated when the agent has a
   // ContextCompressor attached (default). Absent on sessions without
   // compression, so consumers must guard with `typeof x === "number"`.
@@ -76,6 +77,7 @@ export type Message = {
   role: "user" | "assistant" | "system"
   parts: Part[]
   timestamp: number
+  speaker?: string
   model?: string
   duration?: number
   usage?: Usage

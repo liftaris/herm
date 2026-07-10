@@ -93,12 +93,35 @@ describe("PromptCard.Approval", () => {
 
   test("answered part collapses to Outcome line", async () => {
     await using t = await mountNode(
-      <PromptCard part={{ ...approval(), answered: { label: "Allow once", ok: true, at: 0 } }}
+      <PromptCard part={{ ...approval(), answered: { label: "Allow once", ok: true, at: 0, question: "recursive rm" } }}
         onAnswer={() => {}} />,
     )
     expect(t.frame()).toContain("✓")
     expect(t.frame()).toContain("Allow once")
+    expect(t.frame()).toContain("recursive rm")
     expect(t.frame()).not.toContain("$ rm")
+  })
+
+  test("answered approval and secret outcomes preserve safe context only", async () => {
+    await using t = await mountNode(
+      <box flexDirection="column">
+        <PromptCard part={{
+          ...approval({ command: "cat /etc/shadow", description: "read shadow" }),
+          answered: { label: "Deny", ok: false, at: 0, question: "read shadow" },
+        }} onAnswer={() => {}} />
+        <PromptCard part={{
+          type: "prompt", id: "s1", variant: "secret",
+          req: { variant: "secret", request_id: "s1", prompt: "paste token hunter2", env_var: "API_KEY" },
+          answered: { label: "(provided)", ok: true, at: 0, question: "Secret: API_KEY" },
+        }} onAnswer={() => {}} />
+      </box>,
+    )
+    const f = t.frame()
+    expect(f).toContain("read shadow")
+    expect(f).not.toContain("cat /etc/shadow")
+    expect(f).toContain("API_KEY (provided)")
+    expect(f).not.toContain("hunter2")
+    expect(f).not.toContain("paste token")
   })
 })
 
@@ -119,6 +142,30 @@ describe("PromptCard.Clarify", () => {
     act(() => ref.current!.feed({ name: "return" } as never))
     await t.settle()
     expect(gw.last("clarify.respond")?.params).toMatchObject({ request_id: "r1", answer: "B" })
+  })
+
+  test("answered outcomes keep question and selected/freeform answers visible", async () => {
+    const long = "write a concise status update that explains the work done without mentioning private implementation process details"
+    await using t = await mountNode(
+      <box flexDirection="column">
+        <PromptCard part={{
+          type: "prompt", id: "c1", variant: "clarify",
+          req: { variant: "clarify", request_id: "r1", question: "which one?", choices: ["red", "blue"] },
+          answered: { label: "blue", ok: true, at: 0, question: "which one?" },
+        }} onAnswer={() => {}} />
+        <PromptCard part={{
+          type: "prompt", id: "c2", variant: "clarify",
+          req: { variant: "clarify", request_id: "r2", question: long, choices: null },
+          answered: { label: "Use the shorter terminal-friendly wording", ok: true, at: 0, question: long },
+        }} onAnswer={() => {}} />
+      </box>,
+      { width: 90, height: 20 },
+    )
+    const f = t.frame()
+    expect(f).toContain("which one?")
+    expect(f).toContain("blue")
+    expect(f).toContain("write a concise status update")
+    expect(f).toContain("Use the shorter terminal-friendly wording")
   })
 })
 

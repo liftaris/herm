@@ -29,7 +29,7 @@ import { openHistory } from "../dialogs/history"
 import { openStatus, openUsage, openProfile } from "../dialogs/info"
 import { openChafa } from "../dialogs/chafa"
 import { SKINS, type SkinState } from "../context/skin"
-import { copy as clipCopy } from "../utils/clipboard"
+import { copyText as clipCopy } from "../utils/clipboard"
 import * as preferences from "../context/preferences"
 import { redraw } from "./useAppKeys"
 import { quit } from "./exit"
@@ -75,11 +75,62 @@ export type SlashCtx = {
 
   newSession: () => Promise<void>
   switchSession: (id: string) => Promise<void>
-  activateSession: (id: string) => Promise<void>
-  rewind: (m: Message) => Promise<void>
+  activateSession: (id: string) => Promise<boolean>
+  rewind: (m: Message) => Promise<boolean>
   goTo: (tab: number, sub: number) => void
   attachClipboard: () => void
   voiceToggle: (action: string, sid: string) => Promise<void>
+}
+
+const AGGRESSIVE = "--aggressive is not supported; use '/compress here [N]' to keep only recent exchanges, or /undo to drop turns."
+
+function flags(arg: string) {
+  const kept: string[] = []
+  const preview = { on: false, aggressive: false }
+  for (const tok of arg.split(/\s+/).filter(Boolean)) {
+    const low = tok.toLowerCase()
+    if (low === "--preview" || low === "--dry-run" || low === "--dryrun") preview.on = true
+    else if (low === "--aggressive") preview.aggressive = true
+    else kept.push(tok)
+  }
+  return { arg: kept.join(" "), preview: preview.on, aggressive: preview.aggressive }
+}
+
+function partial(arg: string) {
+  const text = arg.trim()
+  if (!text) return { on: false, keep: 2, focus: "" }
+  const norm = text.toLowerCase().startsWith("up to here") ? text.slice(6).trim() : text
+  const bits = norm.toLowerCase().split(/\s+/)
+  const keep = (v: string | undefined) => Math.min(Math.max(parseInt(v ?? "", 10) || 2, 1), 100)
+  if (bits[0] === "here") return { on: true, keep: keep(bits[1]), focus: "" }
+  if ((bits[0] === "--keep" || bits[0] === "-k") && bits[1]) return { on: true, keep: keep(bits[1]), focus: "" }
+  if (bits[0]?.startsWith("--keep=")) return { on: true, keep: keep(bits[0].split("=", 2)[1]), focus: "" }
+  return { on: false, keep: 2, focus: text }
+}
+
+function preview(arg: string, msgs: Message[]): string[] | null {
+  const f = flags(arg)
+  if (f.aggressive && !f.preview) return [AGGRESSIVE]
+  if (!f.preview) return null
+  const p = partial(f.arg)
+  const at = p.on ? [...msgs].reverse().reduce((acc, m, i) => {
+    if (acc.length < p.keep && m.role === "user") return [...acc, msgs.length - 1 - i]
+    return acc
+  }, [] as number[]).at(-1) : undefined
+  const head = at === undefined || at === 0 ? msgs : msgs.slice(0, at)
+  const tail = at === undefined || at === 0 ? [] : msgs.slice(at)
+  const lines = [
+    "Preview — no changes made.",
+    `Would compress ${head.length} of ${msgs.length} message(s) (~${Math.ceil(msgs.map(msgText).join("\n\n").length / 4).toLocaleString()} tokens currently in context).`,
+  ]
+  if (p.on && tail.length)
+    lines.push(`Boundary: keeping the last ${p.keep} exchange(s) (${tail.length} message(s)) verbatim.`)
+  else if (p.on)
+    lines.push("Boundary: 'here' split would keep everything — falling back to full compression.")
+  if (p.focus) lines.push(`Focus topic: "${p.focus}"`)
+  lines.push("Run the command again without --preview to apply.")
+  if (f.aggressive) lines.push(AGGRESSIVE)
+  return lines
 }
 
 export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void {
@@ -147,11 +198,29 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
 
   // Manual compression mutates server context only; keep the live chat
   // transcript visually stable, matching auto-compression.
-  const runCompress = useCallback(async () => {
+  const runCompress = useCallback(async (arg = "") => {
+    const raw = arg.trim()
+    const pv = preview(raw, ctx.current.turnRef.current.messages)
+    if (pv) {
+      ctx.current.dispatch({ kind: "system", text: pv.join("\n") })
+      toast.show({ variant: pv.length === 1 ? "warning" : "info",
+        message: pv.length === 1 ? "compress unsupported" : "Preview — no changes made" })
+      return
+    }
     toast.show({ variant: "info", message: "Compressing session…" })
-    const r = await ctx.current.session.compress()
+    const r = await ctx.current.session.compress(raw).catch((err: Error) => {
+      toast.show({ variant: "error", message: err.message })
+      return null
+    })
     if (!r) return
     if (r.info) ctx.current.setInfo(r.info)
+    const out = r.lines?.length ? r.lines : r.message ? [r.message] : []
+    if (r.status === "preview" || r.status === "unsupported" || out.length) {
+      if (out.length) ctx.current.dispatch({ kind: "system", text: out.join("\n") })
+      toast.show({ variant: r.status === "unsupported" ? "warning" : "info",
+        message: r.status === "unsupported" ? "compress unsupported" : "Preview — no changes made" })
+      return
+    }
     // r.usage.context_used reads comp.last_prompt_tokens which is set by
     // the last *model turn*, not updated by compression. r.after_tokens
     // IS the fresh rough estimate of the compacted transcript, so splice
@@ -179,9 +248,11 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
 
   const branch = useCallback((name?: string) => {
     const x = ctx.current
-    x.session.branch(name?.trim() || undefined).then(id => id
-      ? void x.activateSession(id)
-      : toast.show({ variant: "error", message: "branch failed" }))
+    void x.session.branch(name?.trim() || undefined)
+      .then(id => id
+        ? void x.activateSession(id)
+        : toast.show({ variant: "error", message: "branch failed" }))
+      .catch((err: Error) => toast.show({ variant: "error", message: err.message }))
   }, [toast])
 
   const run = useCallback((c: SlashCommand, arg = "") => {
@@ -222,6 +293,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
         case "status": openStatus(dialog, x.info, x.sid); return
         case "usage": openUsage(dialog, gw); return
         case "profile": openProfile(dialog); return
+        case "journey": x.goTo(TAB_SLASH.journey.tab, TAB_SLASH.journey.sub); return
         case "chafa":
           if (!arg.trim()) { toast.show({ variant: "info", message: "usage: /chafa <path>" }); return }
           openChafa(dialog, arg.trim())
@@ -259,7 +331,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
         case "branch":
           branch(arg)
           return
-        case "compress": void runCompress(); return
+        case "compress": void runCompress(arg); return
         case "undo":
           destructive(arg,
             { title: "Undo last turn?", body: "Pops the last user + assistant pair from the transcript. /redo in this session to restore.", yes: "undo" },
@@ -269,11 +341,14 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
               // message onward (user + assistant[+tool] run).
               const msgs = x.turnRef.current.messages
               const at = msgs.map(m => m.role).lastIndexOf("user")
-              if (at >= 0) x.undone.current.push(msgs.slice(at))
-              x.session.undo().then(() =>
-                gw.request<{ messages: TranscriptMessage[] }>("session.history")
-                  .then(r => x.dispatch({ kind: "load", messages: transcriptToMessages(r.messages ?? []) }))
-                  .catch(() => {}))
+              const tail = at >= 0 ? msgs.slice(at) : []
+              x.session.undo()
+                .then(() => {
+                  if (tail.length) x.undone.current.push(tail)
+                  return gw.request<{ messages: TranscriptMessage[] }>("session.history")
+                })
+                .then(r => x.dispatch({ kind: "load", messages: transcriptToMessages(r.messages ?? []) }))
+                .catch((err: Error) => toast.show({ variant: "error", message: err.message }))
             })
           return
         case "redo": {
@@ -286,11 +361,12 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
         case "retry": {
           const last = [...x.turnRef.current.messages].reverse().find(m => m.role === "user")
           if (!last) { toast.show({ variant: "info", message: "nothing to retry" }); return }
-          void x.rewind(last).then(() => x.sendRef.current(msgText(last)))
+          void x.rewind(last).then(ok => { if (ok) x.sendRef.current(msgText(last)) })
           return
         }
         case "model":
           if (!arg) { openModelPicker(dialog, gw); return }
+          if (arg.trim() === "--refresh") { openModelPicker(dialog, gw, { refresh: true }); return }
           gw.request<{ value?: string; warning?: string }>("config.set",
             { key: "model", value: arg })
             .then(r => {
@@ -361,8 +437,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
           const m = all[n - 1]
           if (!m) { toast.show({ variant: "info", message: "nothing to copy" }); return }
           const body = msgText(m)
-          void clipCopy(body)
-          toast.show({ variant: "success", message: `copied ${body.length} chars` })
+          void clipCopy(body, toast, `copied ${body.length} chars`)
           return
         }
         case "paste": x.attachClipboard(); return
@@ -375,13 +450,18 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
         case "background":
-          if (!arg) { toast.show({ variant: "info", message: "usage: /background <prompt>" }); return }
-          gw.request<{ task_id?: string }>("prompt.background", { text: arg })
+          if (!arg) { x.dispatch({ kind: "system", text: "/background <prompt>" }); return }
+          gw.request<{ task_id?: string }>(
+            "prompt.background",
+            x.sid ? { session_id: x.sid, text: arg } : { text: arg },
+          )
             .then(r => {
-              if (r.task_id) bg.register(r.task_id)
-              toast.show(r.task_id
-                ? { variant: "success", message: `background ${r.task_id} started` }
-                : { variant: "error", message: "background start failed" })
+              if (!r.task_id) {
+                toast.show({ variant: "error", message: "background start failed" })
+                return
+              }
+              bg.register(r.task_id, arg)
+              x.dispatch({ kind: "system", text: `bg ${r.task_id} started` })
             })
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
@@ -426,7 +506,6 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             .catch((e: Error) => toast.show({ variant: "error", message: `browser: ${e.message}` }))
           return
         }
-        case "compact":
         case "setup":
           x.dispatch({ kind: "system",
             text: `/${c.name} is an Ink-TUI command and has no effect in herm` })

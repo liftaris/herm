@@ -313,6 +313,8 @@ export const Agents = memo((props: Props) => {
   const [pSel, setPSel] = useState(0)
   const [dSel, setDSel] = useState(0)
   const [err, setErr] = useState("")
+  const [delegErr, setDelegErr] = useState("")
+  const delegGen = useRef(0)
 
   const active = preorder(deleg?.active ?? [])
   // Aggregates: rebuild the tree from the same snapshot + live
@@ -356,12 +358,21 @@ export const Agents = memo((props: Props) => {
   }, [gw, loadProfiles])
 
   const loadDeleg = useCallback(() => {
+    const current = ++delegGen.current
     gw.request<DelegationStatus>("delegation.status")
-      .then(r => { setDeleg(r); setNow(Date.now() / 1000) })
-      .catch(() => setDeleg({ active: [], paused: false, max_spawn_depth: 0, max_concurrent_children: 0 }))
+      .then(r => {
+        if (delegGen.current !== current) return
+        setDeleg(r)
+        setNow(Date.now() / 1000)
+        setDelegErr("")
+      })
+      .catch(e => {
+        if (delegGen.current === current) setDelegErr(e instanceof Error ? e.message : String(e))
+      })
   }, [gw])
 
   useEffect(loadDeleg, [loadDeleg])
+  useEffect(() => () => { delegGen.current++ }, [])
 
   // Poll delegation while focused + agents are live; back off when idle.
   useEffect(() => {
@@ -452,19 +463,25 @@ export const Agents = memo((props: Props) => {
   // overwrites config.yaml. When the active profile is updated, the
   // gateway stops mid-command; follow with the same rehome path as
   // Switch so herm re-attaches under the refreshed profile.
-  const pUpdate = useCallback((p: ProfileInfo, force: boolean) => {
+  const pUpdate = useCallback(async (p: ProfileInfo, force: boolean) => {
     const cmd = `hermes profile update ${p.name} -y${force ? " --force-config" : ""}`
     toast.show({ variant: "info", message: `Updating '${p.name}'…` })
-    sh(cmd)
-      .then(() => {
-        toast.show({ variant: "success", message: `Updated '${p.name}'` })
-        if (p.is_active && props.onSwitchProfile) {
-          props.onSwitchProfile(p.path, p.name)
-          return
-        }
-        loadProfiles()
-      })
-      .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+    try {
+      await sh(cmd)
+      toast.show({ variant: "success", message: `Updated '${p.name}'` })
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      if (!p.is_active || !props.onSwitchProfile
+          || !/gateway (?:exited|restarted)/i.test(error.message)) {
+        toast.show({ variant: "error", message: error.message })
+        return
+      }
+    }
+    if (p.is_active && props.onSwitchProfile) {
+      props.onSwitchProfile(p.path, p.name)
+      return
+    }
+    loadProfiles()
   }, [sh, toast, loadProfiles, props.onSwitchProfile])
 
   const pEnter = useCallback((i: number) => {
@@ -704,7 +721,7 @@ export const Agents = memo((props: Props) => {
       {/* ── Delegation ── */}
       {showDeleg ? (
       <TabShell title={`Delegation (${active.length})`}
-                focus={pane === "deleg"} grow={2}>
+                focus={pane === "deleg"} grow={2} error={delegErr}>
         <box height={1} flexDirection="row" marginBottom={1}>
           <box flexShrink={0} paddingX={1}
                backgroundColor={deleg?.paused ? theme.warning : theme.backgroundElement}

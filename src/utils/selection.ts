@@ -1,7 +1,8 @@
 import type { ParsedKey, Renderable } from "@opentui/core"
-import { copy } from "./clipboard"
+import { copyText } from "./clipboard"
+import type { ToastContext } from "../ui/toast"
 
-type Toast = { push: (msg: string, kind?: "info" | "ok" | "warn" | "err") => void }
+type Toast = ToastContext
 
 type Renderer = {
   getSelection: () => { getSelectedText: () => string; selectedRenderables: Renderable[] } | null
@@ -9,12 +10,11 @@ type Renderer = {
   currentFocusedRenderable: Renderable | null
 }
 
-export function yank(renderer: Renderer, toast?: Toast): boolean {
+function yank(renderer: Renderer, toast?: Toast): boolean {
   const text = renderer.getSelection()?.getSelectedText()
   if (!text) return false
-  void copy(text)
-    .then(() => toast?.push("Copied to clipboard", "info"))
-    .catch(() => toast?.push("Clipboard write failed", "err"))
+  void copyText(text, toast)
+    .catch(() => toast?.show({ variant: "error", message: "Clipboard write failed" }))
   renderer.clearSelection()
   return true
 }

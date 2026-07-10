@@ -26,6 +26,7 @@ const PATH_KEY = /"(?:path|file_path|filename|target|file)"\s*:\s*"((?:\\.|[^"\\
 const DIFF_HEAD_ARROW = /(?:^|\s)a\/+\S.*?\s*→\s*b\/+(\S.+?)\s*$/m
 const DIFF_HEAD_NEW = /^\+\+\+ b?\/+(\S.*?)\s*$/m
 const DIFF_HEAD_OLD = /^--- a?\/+(\S.*?)\s*$/m
+const VERB = /^(?:Browsing|Clicking|Delegating|Editing|Generating image|Generating speech|Generating video|Listing skills|Looking at the image|Reading skill|Reading|Running code|Running|Scheduling|Searching files for|Searching past sessions|Searching the web for|Typing|Updating memory|Updating skill|Updating tasks|Writing)\s+(.+)$/
 function pathFor(t: ToolPart): string {
   const args = (t as { args?: string }).args
   if (args && /^\s*\{/.test(args)) {
@@ -38,7 +39,8 @@ function pathFor(t: ToolPart): string {
     const m = c.match(DIFF_HEAD_ARROW) || c.match(DIFF_HEAD_NEW) || c.match(DIFF_HEAD_OLD)
     if (m) return m[1]
   }
-  return clean(t.preview ?? t.name)
+  const fallback = clean(t.preview ?? t.name)
+  return fallback.match(VERB)?.[1] ?? fallback
 }
 
 // Strip the gateway's CLI-rendered chrome from inline_diff so DiffBlock

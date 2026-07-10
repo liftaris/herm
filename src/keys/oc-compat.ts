@@ -46,7 +46,7 @@ type OcFile = { keybinds?: Record<string, string> }
 
 /** File candidates, lowest→highest precedence (global, project, dot-dir).
  *  Legacy `opencode.json` is last — oc already warns it's deprecated. */
-export const ocPaths = (cwd = process.cwd()): string[] => [
+const ocPaths = (cwd = process.cwd()): string[] => [
   join(homedir(), ".config", "opencode", "tui.json"),
   join(cwd, "tui.json"),
   join(cwd, ".opencode", "tui.json"),

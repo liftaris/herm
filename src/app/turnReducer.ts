@@ -28,9 +28,11 @@ export type Action =
   | { kind: "push"; message: Message }
   | { kind: "user"; text: string }
   | { kind: "system"; text: string }
+  | { kind: "background"; id: string; title?: string; text: string }
   | { kind: "message.start" }
   | { kind: "message.delta"; chunk: string }
   | { kind: "message.complete"; text?: string; usage?: Usage }
+  | { kind: "reference"; text: string }
   | { kind: "tool.start"; id: string; name: string; preview?: string; args?: string }
   | { kind: "tool.progress"; name?: string; preview?: string }
   | { kind: "tool.generating"; name?: string }
@@ -67,6 +69,9 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
     case "system":
       return { ...state, messages: [...state.messages, systemMessage(sanitize(a.text))] }
 
+    case "background":
+      return { ...state, messages: [...state.messages, backgroundMessage(a.id, a.title, a.text)] }
+
     case "message.start":
       return { ...state, streaming: true, hasContent: false, toolActive: false }
 
@@ -89,6 +94,17 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
         toolActive: false,
         messages: finalize(state.messages, a.text != null ? sanitize(a.text) : undefined, a.usage),
       }
+
+    case "reference": {
+      const text = sanitize(a.text)
+      if (!text) return state
+      return {
+        ...state,
+        hasContent: true,
+        toolActive: false,
+        messages: appendPart(state.messages, { type: "text", key: pid(), content: text, streaming: false }, true),
+      }
+    }
 
     case "tool.start": {
       // `context` carries the raw tool input; when JSON-shaped we keep it
@@ -171,7 +187,7 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
       return {
         ...state,
         messages: updatePrompt(state.messages, a.id, p => ({
-          ...p, answered: { label: a.label, ok: a.ok, at: Date.now() },
+          ...p, answered: { label: a.label, ok: a.ok, at: Date.now(), question: promptQuestion(p.req) },
         })),
       }
 
@@ -211,6 +227,25 @@ function systemMessage(text: string): Message {
   return {
     id: mid(), role: "system",
     parts: [{ type: "text", content: text, streaming: false }],
+    timestamp: Date.now() / 1000,
+  }
+}
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(0, max - 1) + "…"
+}
+
+function label(text: string | undefined, max: number): string {
+  return clip(sanitize(text).replace(/\s+/g, " ").trim(), max)
+}
+
+function backgroundMessage(id: string, title: string | undefined, text: string): Message {
+  const tid = label(id, 32) || "?"
+  const name = label(title, 80)
+  return {
+    id: mid(), role: "assistant",
+    speaker: `[bg ${tid}]${name ? ` ${name}` : ""}`,
+    parts: [{ type: "text", content: sanitize(text), streaming: false }],
     timestamp: Date.now() / 1000,
   }
 }
@@ -304,10 +339,24 @@ function finalize(messages: Message[], final?: string, usage?: Usage): Message[]
       : final && !dup && !sameText(joinText(last.parts), final)
         ? [...last.parts, { type: "text" as const, content: final, streaming: false }]
         : seal(last.parts)
-    return [...messages.slice(0, -1), { ...last, parts, usage }]
+    return expirePrompts([...messages.slice(0, -1), { ...last, parts, usage }])
   }
-  if (!final) return messages
-  return [...messages, { ...assistant([{ type: "text", content: final, streaming: false }]), usage }]
+  const next = final
+    ? [...messages, { ...assistant([{ type: "text", content: final, streaming: false }]), usage }]
+    : messages
+  return expirePrompts(next)
+}
+
+function expirePrompts(messages: Message[]): Message[] {
+  const at = Date.now()
+  return messages.map(m => m.role === "assistant"
+    ? {
+      ...m,
+      parts: m.parts.map(p => p.type === "prompt" && !p.answered
+        ? { ...p, answered: { label: "Timed out", ok: false, at, question: promptQuestion(p.req) } }
+        : p),
+    }
+    : m)
 }
 
 function joinText(parts: Part[]): string {
@@ -352,6 +401,13 @@ function updatePrompt(messages: Message[], id: string, fn: (p: PromptPart) => Pr
     if (!m.parts.some(p => p.type === "prompt" && p.id === id)) return m
     return { ...m, parts: m.parts.map(p => p.type === "prompt" && p.id === id ? fn(p) : p) }
   })
+}
+
+function promptQuestion(req: PromptReq): string | undefined {
+  if (req.variant === "clarify") return req.question
+  if (req.variant === "approval") return req.description || "Shell command"
+  if (req.variant === "sudo") return "Sudo required"
+  return req.env_var ? `Secret: ${req.env_var}` : "Secret required"
 }
 
 function upsertThinking(messages: Message[], text: string, final: boolean, verbose?: boolean): Message[] {

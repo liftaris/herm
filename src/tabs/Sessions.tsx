@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, memo, Fragment } from "react"
 import { SIDE_PIPE } from "../ui/borders"
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { useKeys, handleListKey } from "../keys"
 import { sdb } from "../service/sessions-db"
@@ -9,7 +9,7 @@ import { io as dbio } from "../io"
 import type {
   SessionListItem, SessionListResponse, SessionActiveItem, SessionActiveListResponse,
 } from "../context/wire"
-import { useGateway } from "../context/gateway"
+import { useGateway, useGatewayEvent } from "../context/gateway"
 import { useTheme } from "../theme"
 import { useDialog } from "../ui/dialog"
 import { useToast } from "../ui/toast"
@@ -82,6 +82,7 @@ const FilterRow = memo((p: {
 }) => {
   const theme = useTheme().theme
   const ref = useRef<ScrollBoxRenderable | null>(null)
+  const renderer = useRenderer()
   useEffect(() => {
     const move = () => {
       const node = ref.current
@@ -95,9 +96,14 @@ const FilterRow = memo((p: {
       node.scrollLeft = Math.max(0, left < pos ? left : left + w > pos + port ? left + w - port : pos)
     }
     move()
-    const id = setTimeout(move, 0)
-    return () => clearTimeout(id)
-  }, [p.view, p.views])
+    let frames = 0
+    const frame = async () => {
+      move()
+      if (++frames >= 2) renderer.removeFrameCallback(frame)
+    }
+    renderer.setFrameCallback(frame)
+    return () => renderer.removeFrameCallback(frame)
+  }, [p.view, p.views, renderer])
   return (
     <scrollbox ref={ref} scrollX height={1} paddingLeft={2}
                horizontalScrollbarOptions={HBAR} contentOptions={ROW}>
@@ -173,15 +179,25 @@ const PeekRow = memo((props: { row: Folded }) => {
   )
 })
 
-type Peeker = (sid: string, n?: number) => PeekMsg[] | Promise<PeekMsg[]>
+type Peeker = (sid: string) => PeekMsg[] | Promise<PeekMsg[]>
 
 const Peek = memo((props: { sid: string; total: number; peek: Peeker }) => {
   const theme = useTheme().theme
   const [data, setData] = useState<{ turns: Folded[]; tools: number } | null>(null)
+  const [err, setErr] = useState("")
   const sb = useRef<ScrollBoxRenderable | null>(null)
+  const gen = useRef(0)
 
   useEffect(() => {
-    void Promise.resolve(props.peek(props.sid, 60)).then(m => setData(fold(m)))
+    const current = ++gen.current
+    setData(null)
+    setErr("")
+    void Promise.resolve(props.peek(props.sid))
+      .then(m => { if (gen.current === current) setData(fold(m)) })
+      .catch(e => {
+        if (gen.current === current) setErr(e instanceof Error ? e.message : String(e))
+      })
+    return () => { gen.current++ }
   }, [props.sid, props.peek])
   // Pin to bottom on load — "where did this end up", not "how did
   // it start".
@@ -189,20 +205,26 @@ const Peek = memo((props: { sid: string; total: number; peek: Peeker }) => {
     if (data && sb.current) sb.current.scrollTop = sb.current.scrollHeight
   }, [data])
 
+  if (err) return <box height={1}><text fg={theme.error}>{err}</text></box>
   if (data === null) return null
   if (data.turns.length === 0 && data.tools === 0) return (
     <box height={1}><text fg={theme.textMuted}>(no local transcript)</text></box>
   )
-  const more = Math.max(0, props.total - 60)
+  const gap = props.total > 4
 
   return (
     <box flexDirection="column" flexGrow={1} minHeight={5}
          border borderStyle="single" borderColor={theme.border}
-         title={` Transcript${more > 0 ? `  ·  ${more} earlier` : ""} `}
+         title={` Transcript${gap ? "  ·  first 2 / last 2" : ""} `}
          titleAlignment="left">
       <scrollbox ref={sb} scrollY flexGrow={1} minHeight={3}>
         <box flexDirection="column" width="100%">
-          {data.turns.map((r, i) => <PeekRow key={i} row={r} />)}
+          {data.turns.map((r, i) => <Fragment key={i}>
+            <PeekRow row={r} />
+            {gap && i === 1 ? (
+              <box height={1}><text fg={theme.textMuted}>  …</text></box>
+            ) : null}
+          </Fragment>)}
         </box>
       </scrollbox>
       <box height={1}>
@@ -241,8 +263,19 @@ const Detail = memo((props: {
   // Lineage is an off-thread worker round-trip (sub-ms query, ~1 ms
   // total). Loaded on row change, not every render.
   const [info, setInfo] = useState<LineageInfo>({})
+  const [lineageErr, setLineageErr] = useState("")
+  const lineageGen = useRef(0)
   useEffect(() => {
-    void Promise.resolve(props.lineage(r.id)).then(setInfo)
+    const current = ++lineageGen.current
+    setInfo({})
+    setLineageErr("")
+    void Promise.resolve(props.lineage(r.id))
+      .then(next => { if (lineageGen.current === current) setInfo(next) })
+      .catch(e => {
+        if (lineageGen.current === current)
+          setLineageErr(e instanceof Error ? e.message : String(e))
+      })
+    return () => { lineageGen.current++ }
   }, [r.id, props.lineage])
   const hasLineage = info.continuesFrom || info.compressedTo || subs > 0
   const go = (sid: string) => () => props.onSwitch?.(sid)
@@ -303,6 +336,7 @@ const Detail = memo((props: {
               </box>
             ) : null}
           </> : null}
+          {lineageErr ? <box height={1}><text fg={theme.error}>{lineageErr}</text></box> : null}
           {!d ? <>
             <box height={1} />
             <box height={1}><text fg={theme.textMuted}>(no local detail — state.db mismatch)</text></box>
@@ -397,13 +431,14 @@ type RowCbs = {
 }
 
 const Item = memo((props: {
-  id: string; row: Row; idx: number; selected: boolean; indent?: boolean
+  id: string; row: Row; idx: number; selected: boolean; indent?: boolean; locked?: boolean
 } & RowCbs) => {
   const theme = useTheme().theme
   const { row: r, idx: i } = props
   const [x, setX] = useState(false)
   const active = r.detail?.last_active ?? r.detail?.ended_at ?? null
-  const locked = props.indent || Boolean(r.live)
+  const locked = props.locked || props.indent || Boolean(r.live)
+  const subs = !props.indent && (r.detail?.subagent_count ?? 0) > 0
   // Parent rows get "▸ "/"  " leaders; child rows get "└─" as the tree
   // marker. Selected children still highlight via backgroundColor +
   // text color — indent is the only hierarchy signal.
@@ -417,13 +452,14 @@ const Item = memo((props: {
       <Col w={2} fg={props.selected ? theme.primary : (muted ?? theme.text)}>{leader}</Col>
       <Marquee grow active={props.selected}
                fg={props.selected ? theme.accent : (muted ?? theme.text)}
-               bold={props.selected}>
+               bold={props.selected}
+               underline={props.selected && subs}>
         {label(r)}
       </Marquee>
       <Col w={9} fg={muted ?? theme.info}>{badge(src(r))}</Col>
       <Col w={8} fg={theme.textMuted}>{stamp(r.started_at)}</Col>
       <Col w={10} fg={theme.textMuted} right>{active ? ago(active) : "—"}</Col>
-      <Col w={7} fg={theme.textMuted} right>{String(r.message_count)}</Col>
+      <Col w={7} fg={theme.textMuted} right>{subs ? `${r.detail?.subagent_count} subs` : String(r.message_count)}</Col>
       {locked ? <box width={3} /> : (
         <box width={3}
              onMouseDown={(e) => { e.stopPropagation(); props.onDelete(i) }}
@@ -507,7 +543,7 @@ export const Sessions = memo((props: Props) => {
   const dims = useTerminalDimensions()
 
   const cached = props.io == null
-  const io: IO = {
+  const io = useMemo<IO>(() => ({
     list: props.io?.list ?? dbio.roots,
     search: props.io?.search ?? dbio.search,
     subagents: props.io?.subagents ?? dbio.children,
@@ -515,11 +551,12 @@ export const Sessions = memo((props: Props) => {
     peek: props.io?.peek ?? dbio.peek,
     remove: props.io?.remove ?? sdb.remove,
     rename: props.io?.rename ?? sdb.rename,
-  }
+  }), [props.io])
 
   const [rows, setRows] = useState<Row[]>(cached ? last.rows : [])
   const [liveRows, setLiveRows] = useState<Row[]>([])
   const [warn, setWarn] = useState("")
+  const [searchErr, setSearchErr] = useState("")
   const [pending, setPending] = useState(rows.length === 0)
   // Persisted, user-toggleable list ordering. roots() always returns
   // newest-started; we re-sort here so the choice can flip live
@@ -565,6 +602,7 @@ export const Sessions = memo((props: Props) => {
   // on the wrong row. The numeric index consumers use (handleListKey,
   // rowActivate, etc.) is derived from visible[] each render.
   const [anchor, setAnchor] = useState<{ id: string; indent: boolean } | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SessionHit[]>([])
@@ -573,19 +611,24 @@ export const Sessions = memo((props: Props) => {
   // with subagent_count > 0 so render stays pure (no sync fetch).
   const [kids, setKids] = useState<Map<string, Row[]>>(cached ? last.kids : new Map())
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchGen = useRef(0)
   const vscroll = useRef<ScrollBoxRenderable | null>(null)
   const seen = useRef(false)
+  const gen = useRef(0)
 
-  // Expansion is derived from the anchor: if the anchor is a parent
-  // row with subagents, that parent is expanded; if the anchor is a
-  // child, the child's owning parent is expanded. Anything else = no
-  // expansion. This makes collapse/expand atomic with sel changes —
-  // no lagging effect, no clamp pass.
+  // Space arms one parent for inline children. The branch is only
+  // visible while the cursor is on that parent or one of its children,
+  // preserving the old selection-shaped traversal without making mere
+  // highlight expand rows.
   const anchored = anchor && listed.find(r => r.id === anchor.id)
-  const owner =
-    anchor?.indent
-      ? listed.find(r => kids.get(r.id)?.some(c => c.id === anchor.id))
-      : (anchored?.detail?.subagent_count ?? 0) > 0 ? anchored : undefined
+  const branch = open ? listed.find(r => r.id === open) : undefined
+  const owner = branch && (anchor?.indent
+    ? kids.get(branch.id)?.some(c => c.id === anchor.id)
+    : anchored?.id === branch.id)
+    ? branch
+    : undefined
+
+  const showDetailPanel = dims.width >= 120
 
   // Flat visible sequence = parents with `owner`'s children inlined.
   const visible = listed.flatMap((r, i) =>
@@ -594,7 +637,6 @@ export const Sessions = memo((props: Props) => {
          ...(kids.get(r.id) ?? []).map(c =>
            ({ row: c, indent: true, parentIdx: i }))]
       : [{ row: r, indent: false, parentIdx: i }])
-
   // Resolve anchor → numeric index into visible. Fallback to 0 when
   // the anchor row is gone (reload dropped it) or never set.
   const sel = anchor
@@ -644,11 +686,25 @@ export const Sessions = memo((props: Props) => {
   const pick = <T,>(m: Map<string, T>, s: SessionActiveItem) =>
     m.get(s.id) ?? m.get(s.session_key ?? "")
 
+  const patchTitle = useCallback((id?: string, title?: string) => {
+    if (!id || title === undefined) return
+    home.update("recentSessions", rows => rows.map(r => r.id === id ? { ...r, title } : r))
+    setRows(prev => prev.map(row => row.id === id ? { ...row, title, detail: row.detail ? { ...row.detail, title } : row.detail } : row))
+    setLiveRows(prev => prev.map(row => row.id === id || row.live?.session_key === id
+      ? { ...row, title, live: row.live ? { ...row.live, title } : row.live }
+      : row))
+  }, [])
+
+  useGatewayEvent(ev => {
+    if (ev.type === "session.title") patchTitle(ev.payload.session_id, ev.payload.title)
+  })
+
   // Two-stage paint. io.list is off-thread, so the mount frame commits
   // (spinner / cached rows) before it resolves; the RPC is slower still.
   // Kids (subagents per parent) fill in after the list — the tree
   // expands by anchor, so until then it just doesn't expand.
   const load = useCallback(async () => {
+    const current = ++gen.current
     setPending(true)
     const rpc = gw.request<SessionListResponse>("session.list", { limit: LIMIT })
       .then(r => ({ ok: true as const, v: r }))
@@ -659,21 +715,14 @@ export const Sessions = memo((props: Props) => {
     const fs = Promise.resolve(io.list(LIMIT)).catch(() => [])
 
     const disk = await fs
+    if (gen.current !== current) return
     const local = new Map(disk.map(r => [r.id, r]))
     const diskRows = disk.filter(keep).map(toRow)
     setRows(diskRows)
     if (cached) last.rows = diskRows
 
-    const fillKids = async (list: Row[]) => {
-      const ps = list.filter(r => (r.detail?.subagent_count ?? 0) > 0)
-      const cs = await Promise.all(ps.map(r => io.subagents(r.id)))
-      const m = new Map(ps.map((r, i) => [r.id, cs[i].map(toRow)]))
-      setKids(m)
-      if (cached) last.kids = m
-    }
-    void fillKids(diskRows)
-
-    const a = await active
+    const [a, r] = await Promise.all([active, rpc])
+    if (gen.current !== current) return
     const live = a.ok ? (a.v.sessions ?? []) : []
     if (a.ok) {
       setLiveRows(live.map(s => toLiveRow(s, pick(local, s))))
@@ -685,7 +734,7 @@ export const Sessions = memo((props: Props) => {
     // be stale, over-filtered, or ordered differently, but they are
     // still useful when herm is pointed at a remote/mismatched state.
     // Order is applied by the `sorted` memo, not here.
-    const r = await rpc
+    let final = diskRows
     if (r.ok && r.v.sessions?.length) {
       const seen = new Set(diskRows.map(s => s.id))
       const merged = [
@@ -694,21 +743,40 @@ export const Sessions = memo((props: Props) => {
           .filter(s => (s.message_count ?? 0) > 0 && !seen.has(s.id))
           .map(s => ({ ...s, detail: local.get(s.id) })),
       ]
+      final = merged
       setRows(merged)
       if (cached) last.rows = merged
       const found = new Map(merged.map(s => [s.id, s]))
       if (live.length) setLiveRows(live.map(s => toLiveRow(s, pick(local, s), pick(found, s))))
-      void fillKids(merged)
     }
+
+    let kidsError = ""
+    try {
+      const parents = final.filter(row => (row.detail?.subagent_count ?? 0) > 0)
+      const children: SessionRow[][] = []
+      for (let i = 0; i < parents.length; i += 8) {
+        children.push(...await Promise.all(parents.slice(i, i + 8).map(row => io.subagents(row.id))))
+        if (gen.current !== current) return
+      }
+      if (gen.current !== current) return
+      const next = new Map(parents.map((row, i) => [row.id, children[i].map(toRow)]))
+      setKids(next)
+      if (cached) last.kids = next
+    } catch (err) {
+      kidsError = err instanceof Error ? err.message : String(err)
+    }
+    if (gen.current !== current) return
     setPending(false)
-    setWarn(!r.ok
+    const listError = !r.ok
       ? local.size
         ? `gateway session.list failed (${r.e.message}) — listing state.db directly; rows may not resume`
         : r.e.message
-      : "")
-  }, [gw, props.currentId])
+      : ""
+    setWarn([listError, kidsError].filter(Boolean).join(" · "))
+  }, [gw, props.currentId, io, cached])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => () => { gen.current++ }, [])
 
   // Seed anchor once rows arrive. If active rows arrive after the
   // optimistic history paint, promote the untouched first row to active.
@@ -727,20 +795,29 @@ export const Sessions = memo((props: Props) => {
     seen.current = on
   }, [listed, active, hist, anchor])
 
-  // Search is a synchronous FTS5 query on state.db, so debounce —
-  // running it on every keystroke blocks the render thread. The
+  // Search is an FTS5 query on state.db, so debounce to avoid flooding
+  // the worker on every keystroke. The
   // cleanup clears the pending timer, which also drops superseded
   // queries for free (only the most recent query value ever runs).
   useEffect(() => {
+    const current = ++searchGen.current
+    setSearchErr("")
     if (!searching || !query.trim()) { setResults([]); return }
+    setResults([])
+    setSearchSel(0)
     debounce.current = setTimeout(() => {
       void Promise.resolve(io.search(query, 30)).then(r => {
+        if (searchGen.current !== current) return
         setResults(r)
         setSearchSel(0)
+        setSearchErr("")
+      }).catch(err => {
+        if (searchGen.current === current)
+          setSearchErr(err instanceof Error ? err.message : String(err))
       })
     }, 150)
     return () => { if (debounce.current) clearTimeout(debounce.current) }
-  }, [query, searching])
+  }, [query, searching, io])
   // Hover-to-select is onMouseMove, not onMouseOver — the latter fires
   // when scrollChildIntoView moves rows under a stationary cursor and
   // would snap sel back during ↓-repeat (the "stutter"). Mouse motion
@@ -775,7 +852,8 @@ export const Sessions = memo((props: Props) => {
   // guard covers the keyboard shortcut path.
   const rowDelete = useCallback((i: number) => {
     const v = live.current.visible[i]
-    if (v && !v.indent && !v.row.live) confirmDeleteRef.current(v.row)
+    if (v && !v.indent && !v.row.live && v.row.id !== live.current.currentId)
+      confirmDeleteRef.current(v.row)
   }, [])
 
   // Lineage-click switches target a SPECIFIC session (the predecessor
@@ -806,11 +884,14 @@ export const Sessions = memo((props: Props) => {
       const done = await gw.request<{ deleted: string }>("session.delete", { session_id: r.id })
         .then(() => true)
         .catch((e: Error) => {
-          if (/active session/i.test(e.message)) {
+          if (/cannot delete an active session/i.test(e.message)) {
             toast.show({ variant: "error", message: "Can't delete the active session" })
             return false
           }
-          return io.remove(r.id)
+          if (/method not found|unknown method|gateway not running|gateway exited/i.test(e.message))
+            return io.remove(r.id)
+          toast.show({ variant: "error", message: e.message })
+          return false
         })
       if (!done) return
       home.invalidate("recentSessions")
@@ -841,15 +922,26 @@ export const Sessions = memo((props: Props) => {
         home.invalidate("recentSessions")
         // Patch in place so the row updates without a full RPC reload
         // (session.list is the slow path). reload still happens next r.
-        setRows(prev => prev.map(row => ids.includes(row.id) ? { ...row, title } : row))
-        setLiveRows(prev => prev.map(row => row.id === r.id
-          ? { ...row, title, live: row.live ? { ...row.live, title } : row.live }
-          : row))
+        ids.forEach(id => patchTitle(id, title))
         toast.show({ variant: "success", message: "Renamed" })
       })
       .catch((e: Error) =>
         toast.show({ variant: "error", message: `Rename failed: ${e.message}` }))
-  }, [gw, dialog, toast, sel])
+  }, [gw, dialog, toast, sel, patchTitle])
+
+  const toggle = useCallback(() => {
+    const v = visible[sel]
+    if (!v) return
+    if (v.indent) {
+      const p = listed.find(r => kids.get(r.id)?.some(c => c.id === v.row.id))
+      if (!p) return
+      setAnchor({ id: p.id, indent: false })
+      setOpen(null)
+      return
+    }
+    if ((v.row.detail?.subagent_count ?? 0) <= 0) return
+    setOpen(id => id === v.row.id ? null : v.row.id)
+  }, [visible, sel, listed, kids])
 
   const count = searching ? results.length : visible.length
   // Stable ids — include row.id + indent flag so a row moving between
@@ -880,15 +972,16 @@ export const Sessions = memo((props: Props) => {
       page: Math.max(1, (vscroll.current?.viewport.height ?? 10) - 1),
       scrollTo: n => vscroll.current?.scrollChildIntoView(rowId(n)),
       onActivate: () => rowActivate(sel),
-      onToggle: () => setSort(sort === "active" ? "started" : "active"),
+      onToggle: toggle,
       onRefresh: () => { void load(); toast.show({ variant: "info", message: "Reloaded", duration: 1000 }) },
       onDelete: () => {
         const v = visible[sel]
-        if (v && !v.indent && !v.row.live) confirmDelete(v.row)
+        if (v && !v.indent && !v.row.live && v.row.id !== props.currentId) confirmDelete(v.row)
       },
       onSearch: () => { setSearching(true); setQuery(""); setResults([]); setSearchSel(0) },
     })
     if (matched) return
+    if (keys.match("sessions.sort", key)) return setSort(sort === "active" ? "started" : "active")
     if (keys.match("sessions.rename", key)) return void rename()
     const prev = keys.match("sessions.prev", key)
     const next = keys.match("sessions.next", key)
@@ -911,10 +1004,10 @@ export const Sessions = memo((props: Props) => {
   const gap = (i: number) => active.length > 0 && tabs(i)
   const blank = cur?.aggregate === HOME ? "No conversations found"
     : cur ? `No ${cur.label} sessions found` : "No sessions found"
-  // Sidebar yields at <140 on non-Chat tabs (app.tsx), so detail can
-  // stay mounted down to the shell's own floor.
-  const showDetailPanel = dims.width >= 120
   const nav = views.length > 1 ? [["←→", "filter"] as [string, string]] : []
+  const sub = visible[sel]?.indent || (visible[sel]?.row.detail?.subagent_count ?? 0) > 0
+    ? [[keys.print("list.toggle"), visible[sel]?.indent || open === visible[sel]?.row.id ? "hide subs" : "show subs"] as [string, string]]
+    : []
 
   return (
     <box flexDirection="column" flexGrow={1} minWidth={0}>
@@ -923,7 +1016,7 @@ export const Sessions = memo((props: Props) => {
         title={searching
           ? `Search Results (${results.length})`
           : `Sessions (${listed.length}${pending ? "…" : ""})`}
-        error={warn || null}
+        error={[warn, searchErr].filter(Boolean).join(" · ") || null}
         grow={3}
       >
         {searching ? (
@@ -974,6 +1067,7 @@ export const Sessions = memo((props: Props) => {
                       </> : null}
                       <Item id={rowId(i)} idx={i}
                         row={v.row} selected={i === sel} indent={v.indent}
+                        locked={v.row.id === props.currentId}
                         onActivate={rowActivate} onHover={rowHover} onDelete={rowDelete} />
                     </box>
                   ))}
@@ -995,7 +1089,8 @@ export const Sessions = memo((props: Props) => {
       {showDetailPanel && searching && results[searchSel]
         ? <SearchDetail result={results[searchSel]} />
         : showDetailPanel && !searching && visible[sel]?.row
-          ? <Detail row={visible[sel].row} lineage={io.lineage} peek={io.peek} onSwitch={lineageSwitch} />
+          ? <Detail key={visible[sel].row.id} row={visible[sel].row}
+              lineage={io.lineage} peek={io.peek} onSwitch={lineageSwitch} />
           : null}
     </box>
     <HintBar pairs={searching
@@ -1007,9 +1102,10 @@ export const Sessions = memo((props: Props) => {
       : [
           ["↑↓", "navigate"],
           ...nav,
+          ...sub,
           [`${keys.print("list.activate")}/click`, action],
           [keys.print("list.search"), "search"],
-          [keys.print("list.toggle"), `sort: ${sort}`],
+          [keys.print("sessions.sort"), `sort: ${sort}`],
           [keys.print("sessions.rename"), "rename"],
           [keys.print("list.delete"), "delete"],
           [keys.print("list.refresh"), "refresh"],

@@ -92,6 +92,56 @@ describe("approval memory", () => {
     t.destroy()
   })
 
+  test("failed remembered response restores the approval prompt", async () => {
+    prefsAny.set("neverPrompts", [
+      { group: "approval", question: "Run dangerous command?", subject: "rm_recursive|tmp_write" },
+    ])
+    const gw = new MockGateway({
+      "approval.respond": () => { throw new Error("approval wire down") },
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => gw.push({
+      type: "approval.request",
+      payload: { command: "rm -rf /tmp/retry", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
+    }))
+
+    await until(t, () => t.frame().includes("approval wire down") && t.frame().includes("$ rm -rf /tmp/retry"))
+    t.destroy()
+  })
+
+  test("failed remembered response does not leak into a replacement session", async () => {
+    prefsAny.set("neverPrompts", [
+      { group: "approval", question: "Run dangerous command?", subject: "rm_recursive|tmp_write" },
+    ])
+    let fail!: (error: Error) => void
+    let creates = 0
+    const pending = new Promise<never>((_resolve, reject) => { fail = reject })
+    const gw = new MockGateway({
+      "approval.respond": () => pending,
+      "session.create": () => ({ session_id: `sid-${++creates}` }),
+    })
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => gw.push({
+      type: "approval.request",
+      payload: { command: "rm -rf /tmp/stale", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
+    }))
+    await until(t, () => gw.last("approval.respond") !== undefined)
+
+    await act(async () => { await t.keys.typeText("/new now") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => creates === 2 && t.frame().includes("Ready"))
+    fail(new Error("old approval failed"))
+    await act(async () => { await Bun.sleep(20) })
+    await t.settle()
+    expect(t.frame()).not.toContain("$ rm -rf /tmp/stale")
+    await act(async () => { await t.keys.typeText("fresh message") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => gw.last("prompt.submit")?.params.text === "fresh message")
+    t.destroy()
+  })
+
   test("does not reuse memory for a different question or different subject", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))

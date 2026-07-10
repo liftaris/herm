@@ -28,6 +28,13 @@ describe("config/index", () => {
     expect(fs.find(x => x.key === "agent.max_turns")!.type).toBe("number")
   })
 
+  test("tool progress offers only live TUI modes", () => {
+    const f = buildFields({}).find(x => x.key === "display.tool_progress")!
+    expect(f.type).toBe("select")
+    expect(f.options).toEqual(["off", "new", "all", "verbose"])
+    expect(f.options).not.toContain("log")
+  })
+
   test("unknown user key surfaces as an extra field", () => {
     const fs = buildFields({ mystery: { flag: true } })
     const f = fs.find(x => x.key === "mystery.flag")

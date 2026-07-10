@@ -52,7 +52,7 @@ export function visible(tool: Part, mode: DetailMode): boolean {
   return mode !== "hidden" || tool.status === "running"
 }
 
-export function details(tool: Part, mode: DetailMode): Detail[] {
+function details(tool: Part, mode: DetailMode): Detail[] {
   const full = tool.verboseResult && !isDiff(tool.verboseResult) ? tool.verboseResult : undefined
   const sum = tool.result && !isDiff(tool.result) ? tool.result : undefined
   const err: Detail | undefined = tool.status === "error" && (full || sum)

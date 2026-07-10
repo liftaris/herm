@@ -12,6 +12,14 @@ import { useDialog } from "../../ui/dialog"
 import { useKeyboard } from "@opentui/react"
 import { useKeys } from "../../keys"
 
+export type HiddenContext = {
+  profile?: string
+  model?: string
+  title?: string
+  place?: string
+  context?: string
+}
+
 // The pillar body carries a compact identity block, the MCP operational
 // section, and a context-usage gauge at the bottom. Stats/Memory/Recent/
 // Identity wrapper and the Plugins section were removed — they duplicated
@@ -23,6 +31,23 @@ const PAD_L = 12
 const INNER = WIDTH - 4
 
 const trunc = (s: string, max: number) => s.length <= max ? s : s.slice(0, max - 1) + "…"
+
+export function hidden(props: {
+  info?: SessionInfo | null
+  usage?: Usage
+  profile?: string
+  title?: string
+  branch?: string | null
+}): HiddenContext {
+  const cwd = props.info?.cwd?.split(/[/\\]/).filter(Boolean).pop()
+  return {
+    profile: props.profile,
+    model: props.info?.model,
+    title: props.title,
+    place: props.branch ?? cwd,
+    context: typeof props.usage?.context_percent === "number" ? `${props.usage.context_percent}%` : undefined,
+  }
+}
 
 const Section = memo((props: {
   title: string; hint?: string

@@ -150,6 +150,119 @@ describe("Toolsets tab", () => {
     t.destroy()
   })
 
+  test("rapid toggles serialize and preserve the newer choice", async () => {
+    let first!: (value: unknown) => void
+    let second!: (value: unknown) => void
+    let requests = 0
+    const gw = new MockGateway({
+      "toolsets.list": () => ({ toolsets: SETS }),
+      "tools.configure": () => new Promise(resolve => {
+        if (requests++ === 0) first = resolve
+        else second = resolve
+      }),
+    })
+    const t = await mountNode(<Toolsets focused />, { gw })
+    await until(t, () => t.frame().includes("Toolsets (5)"))
+
+    await act(async () => { await t.keys.typeText(" ") })
+    await t.settle()
+    await act(async () => { await t.keys.typeText(" ") })
+    await t.settle()
+    expect(gw.calls.filter(c => c.method === "tools.configure").map(c => c.params.action))
+      .toEqual(["disable"])
+
+    first({ changed: ["file"], enabled_toolsets: ["hermes-cli", "mcp:linear"], missing_servers: [], unknown: [] })
+    await until(t, () => gw.calls.filter(c => c.method === "tools.configure").length === 2)
+    expect(gw.last("tools.configure")?.params.action).toBe("enable")
+    second({ changed: ["file"], enabled_toolsets: ["file", "hermes-cli", "mcp:linear"], missing_servers: [], unknown: [] })
+    await act(async () => { await Bun.sleep(0) })
+    await t.settle()
+
+    expect(strip(t.frame())).toMatch(/●\s+file\b/)
+    t.destroy()
+  })
+
+  test("failed serialized toggles restore the last authoritative state", async () => {
+    let failFirst!: (error: Error) => void
+    let failSecond!: (error: Error) => void
+    let requests = 0
+    const gw = new MockGateway({
+      "toolsets.list": () => ({ toolsets: [SETS[0]] }),
+      "tools.configure": () => new Promise((_, reject) => {
+        if (requests++ === 0) failFirst = reject
+        else failSecond = reject
+      }),
+    })
+    const t = await mountNode(<Toolsets focused />, { gw })
+    await until(t, () => t.frame().includes("Toolsets (1)"))
+    await act(async () => { await t.keys.typeText(" ") })
+    await t.settle()
+    await act(async () => { await t.keys.typeText(" ") })
+    failFirst(new Error("first failed"))
+    await until(t, () => requests === 2)
+    failSecond(new Error("second failed"))
+    await until(t, () => t.frame().includes("second failed"))
+
+    expect(strip(t.frame())).toMatch(/●\s+file\b/)
+    t.destroy()
+  })
+
+  test("same-frame double toggle preserves the original state", async () => {
+    let enabled = true
+    const actions: string[] = []
+    const gw = new MockGateway({
+      "toolsets.list": () => ({ toolsets: [SETS[0]] }),
+      "tools.configure": p => {
+        actions.push(p.action as string)
+        enabled = p.action === "enable"
+        return { changed: ["file"], enabled_toolsets: enabled ? ["file"] : [], missing_servers: [], unknown: [] }
+      },
+    })
+    const t = await mountNode(<Toolsets focused />, { gw })
+    await until(t, () => t.frame().includes("Toolsets (1)"))
+
+    act(() => {
+      void t.keys.typeText(" ")
+      void t.keys.typeText(" ")
+    })
+    await until(t, () => actions.length > 0)
+    await t.settle()
+
+    expect(actions.at(-1)).toBe("enable")
+    expect(strip(t.frame())).toMatch(/●\s+file\b/)
+    t.destroy()
+  })
+
+  test("stale refresh cannot overwrite a completed toggle", async () => {
+    let refresh!: (value: unknown) => void
+    let lists = 0
+    const gw = new MockGateway({
+      "toolsets.list": () => {
+        if (lists++ === 0) return { toolsets: SETS }
+        return new Promise(resolve => { refresh = resolve })
+      },
+      "tools.configure": () => ({
+        changed: ["file"],
+        enabled_toolsets: ["hermes-cli", "mcp:linear"],
+        missing_servers: [],
+        unknown: [],
+      }),
+    })
+    const t = await mountNode(<Toolsets focused />, { gw })
+    await until(t, () => t.frame().includes("Toolsets (5)"))
+
+    await act(async () => { await t.keys.typeText("r") })
+    await until(t, () => lists === 2)
+    await act(async () => { await t.keys.typeText(" ") })
+    await until(t, () => strip(t.frame()).match(/○\s+file\b/) !== null)
+    refresh({ toolsets: SETS })
+    await act(async () => { await Bun.sleep(0) })
+    await t.settle()
+
+    expect(strip(t.frame())).toMatch(/○\s+file\b/)
+    t.destroy()
+  })
+
   test("detail pane shows includes/requirements/tools when wire provides them", async () => {
     const gw = new MockGateway({ "toolsets.list": () => ({ toolsets: [
       { name: "safe", description: "read-only bundle", tool_count: 5, enabled: true,

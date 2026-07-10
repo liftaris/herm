@@ -23,7 +23,7 @@ export const CONFIG_TAB = 3
 export const EIKON_TAB = 4
 
 export const SUB_TABS: Record<number, readonly string[]> = {
-  [SESSIONS_TAB]:   ["List", "Context", "Analytics"],
+  [SESSIONS_TAB]:   ["List", "Context", "Analytics", "Journey"],
   [AUTOMATION_TAB]: ["Kanban", "Profiles", "Cron"],
   [CONFIG_TAB]:     ["Config", "Skills", "Toolsets", "Env", "Memory"],
   [EIKON_TAB]:      ["Library", "Catalog", "Studio"],
@@ -37,6 +37,9 @@ export const TAB_SLASH: Record<string, { tab: number; sub: number }> = {
   context:    { tab: SESSIONS_TAB,   sub: 1 },
   analytics:  { tab: SESSIONS_TAB,   sub: 2 },
   insights:   { tab: SESSIONS_TAB,   sub: 2 },
+  journey:    { tab: SESSIONS_TAB,   sub: 3 },
+  learning:   { tab: SESSIONS_TAB,   sub: 3 },
+  "memory-graph": { tab: SESSIONS_TAB, sub: 3 },
   kanban:     { tab: AUTOMATION_TAB, sub: 0 },
   automation: { tab: AUTOMATION_TAB, sub: 0 },
   profiles:   { tab: AUTOMATION_TAB, sub: 1 },

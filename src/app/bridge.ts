@@ -36,12 +36,19 @@ export function useBridge(o: {
     setBridge({
       tab: () => state.current.tab,
       setTab: o.setTab,
-      send: (msg: string) => {
+      send: async (msg: string) => {
         const s = state.current
-        if (!s.ready || s.streaming) return
-        s.dispatch({ kind: "user", text: msg })
-        gw.request("prompt.submit", { text: msg }).catch(() => {})
+        if (!s.ready) throw new Error("not connected")
+        if (s.streaming) throw new Error("already streaming")
         s.setTab(CHAT_TAB)
+        try {
+          await gw.request("prompt.submit", { text: msg })
+          s.dispatch({ kind: "user", text: msg })
+        } catch (err) {
+          const text = err instanceof Error ? err.message : String(err)
+          s.dispatch({ kind: "system", text: `Failed to send: ${text}` })
+          throw err
+        }
       },
       ready: () => state.current.ready,
       streaming: () => state.current.streaming,

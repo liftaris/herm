@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { act, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { mountNode, until } from "./harness"
 import { useDialog } from "../src/ui/dialog"
 

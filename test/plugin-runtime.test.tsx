@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { act } from "react"
 import { mount, mountNode, until, type Harness } from "./harness"
 import { usePlugins } from "../src/plugins/runtime"
 import type { HermPlugin, HermPluginApi } from "../src/plugins/types"
@@ -50,6 +51,108 @@ describe("PluginProvider", () => {
     }
     await using t = await mountNode(<Host />, { width: 60, height: 10, plugins: [p] })
     await until(t, () => t.frame().includes("routes:Files"))
+  })
+
+  test("plugin routes receive live content focus", async () => {
+    let api: HermPluginApi | undefined
+    const plugin: HermPlugin = {
+      id: "focus-route",
+      tui(value) {
+        api = value
+        value.route.register([{
+          name: "FocusRoute",
+          render: ctx => <text>{ctx.focused ? "route focused" : "route blurred"}</text>,
+        }])
+      },
+    }
+    await using t = await mount({ plugins: [plugin] })
+    await until(t, () => api !== undefined)
+    await act(async () => { await Bun.sleep(50) })
+    await t.settle()
+    act(() => api!.route.navigate("FocusRoute"))
+    await until(t, () => t.frame().includes("route focused"))
+
+    act(() => api!.ui.dialog.replace(<text>route dialog</text>))
+    await until(t, () => t.frame().includes("route dialog") && t.frame().includes("route blurred"))
+    act(() => api!.ui.dialog.clear())
+    await until(t, () => t.frame().includes("route focused"))
+
+    act(() => t.keys.pressTab())
+    await act(async () => { await Bun.sleep(50) })
+    act(() => t.keys.pressTab())
+    await until(t, () => t.frame().includes("route blurred"))
+  })
+
+  test("throwing route renderer is isolated from the shell", async () => {
+    let api: HermPluginApi | undefined
+    const plugin: HermPlugin = {
+      id: "bad-route",
+      tui(value) {
+        api = value
+        value.route.register([{
+          name: "BadRoute",
+          render: () => { throw new Error("route exploded") },
+        }])
+      },
+    }
+    await using t = await mount({ plugins: [plugin] })
+    await until(t, () => api !== undefined)
+    await act(async () => { await Bun.sleep(50) })
+    act(() => api!.route.navigate("BadRoute"))
+    await until(t, () => t.frame().includes("route exploded"))
+    expect(t.frame()).toContain("Ready")
+  })
+
+  test("removing the active plugin route returns to Chat", async () => {
+    let api: HermPluginApi | undefined
+    let remove: (() => void) | undefined
+    const plugin: HermPlugin = {
+      id: "short-route",
+      tui(value) {
+        api = value
+        remove = value.route.register([{
+          name: "ShortRoute",
+          render: () => <text>short route body</text>,
+        }])
+      },
+    }
+    await using t = await mount({ plugins: [plugin] })
+    await until(t, () => api !== undefined && remove !== undefined)
+    await act(async () => { await Bun.sleep(50) })
+    act(() => api!.route.navigate("ShortRoute"))
+    await until(t, () => t.frame().includes("short route body"))
+
+    act(() => remove!())
+    await until(t, () => api!.route.current === "Chat")
+    expect(t.frame()).not.toContain("short route body")
+  })
+
+  test("removing an earlier route preserves the active route by name", async () => {
+    let api: HermPluginApi | undefined
+    let removeFirst: (() => void) | undefined
+    const plugin: HermPlugin = {
+      id: "route-order",
+      tui(value) {
+        api = value
+        removeFirst = value.route.register([{
+          name: "FirstRoute",
+          render: () => <text>first route body</text>,
+        }])
+        value.route.register([{
+          name: "SecondRoute",
+          render: () => <text>second route body</text>,
+        }])
+      },
+    }
+    await using t = await mount({ plugins: [plugin] })
+    await until(t, () => api !== undefined && removeFirst !== undefined)
+    await act(async () => { await Bun.sleep(50) })
+    act(() => api!.route.navigate("SecondRoute"))
+    await until(t, () => t.frame().includes("second route body"))
+
+    act(() => removeFirst!())
+    await until(t, () => api!.route.current === "SecondRoute")
+    expect(t.frame()).toContain("second route body")
   })
 
   test("failing tui() is isolated — later plugins still activate", async () => {

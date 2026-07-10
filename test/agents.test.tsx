@@ -212,6 +212,35 @@ const STATUS = (over: Partial<DelegationStatus> = {}): DelegationStatus => ({
 })
 
 describe("Agents tab", () => {
+  test("delegation load failure is visible", async () => {
+    const gw = new MockGateway({
+      "delegation.status": () => { throw new Error("delegation unavailable") },
+    })
+    const t = await mountNode(<Agents focused sessionId="test-sid" />, { gw, width: 200 })
+    await until(t, () => t.frame().includes("delegation unavailable"))
+    t.destroy()
+  })
+
+  test("late delegation poll cannot replace a newer snapshot", async () => {
+    let release!: () => void
+    let calls = 0
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const stale = STATUS({ active: [{ ...RECS()[0], goal: "stale delegation" }] })
+    const gw = new MockGateway({
+      "delegation.status": () => calls++ === 0 ? gate.then(() => stale) : STATUS({ active: [] }),
+    })
+    const t = await mountNode(<Agents focused sessionId="test-sid" />, { gw, width: 200 })
+    await until(t, () => calls === 1)
+    act(() => gw.push({ type: "subagent.start", payload: { subagent_id: "new", task_index: 0, goal: "new" } }))
+    await until(t, () => calls === 2 && t.frame().includes("Delegation (0)"))
+
+    release()
+    await gate
+    await t.settle()
+    expect(t.frame()).not.toContain("stale delegation")
+    t.destroy()
+  })
+
   test("loads profiles (fs) + delegation (RPC), preorder sort; is_active from gateway", async () => {
     const gw = new MockGateway({
       "delegation.status": () => STATUS(),
@@ -805,6 +834,65 @@ describe("Agents tab", () => {
     expect(cmds[0]).toBe("hermes profile update coder -y")
     await until(t, () => switched.length > 0)
     expect(switched).toEqual([[join(ROOT, "profiles", "coder"), "coder"]])
+    t.destroy()
+  })
+
+  test("active profile update reconnects when the gateway exits mid-command", async () => {
+    writeFileSync(join(ROOT, "profiles", "coder", "distribution.yaml"),
+      "name: acme-coder\nversion: 0.9.0\nsource: https://github.com/acme/coder\n")
+    const switched: Array<[string, string]> = []
+    const gw = new MockGateway({
+      "shell.exec": () => { throw new Error("gateway exited (0)") },
+      "config.get": p => p.key === "profile"
+        ? { home: join(ROOT, "profiles", "coder"), display: "coder" }
+        : { config: {} },
+    })
+    const t = await mountNode(
+      <Agents focused sessionId="test-sid"
+              onSwitchProfile={(home, name) => switched.push([home, name])} />,
+      { gw, width: 200 },
+    )
+    await until(t, () => t.frame().includes("Profiles (2)"))
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Profile · coder (active)"))
+    for (const c of "update") await act(async () => { await t.keys.typeText(c) })
+    await t.settle()
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Update distribution?"))
+    await act(async () => { await t.keys.typeText("y") })
+
+    await until(t, () => switched.length > 0)
+    expect(switched).toEqual([[join(ROOT, "profiles", "coder"), "coder"]])
+    t.destroy()
+  })
+
+  test("active profile update does not reconnect after an ordinary command failure", async () => {
+    writeFileSync(join(ROOT, "profiles", "coder", "distribution.yaml"),
+      "name: acme-coder\nversion: 0.9.0\nsource: https://github.com/acme/coder\n")
+    const switched: Array<[string, string]> = []
+    const gw = new MockGateway({
+      "shell.exec": () => ({ stdout: "", stderr: "permission denied", code: 1 }),
+      "config.get": p => p.key === "profile"
+        ? { home: join(ROOT, "profiles", "coder"), display: "coder" }
+        : { config: {} },
+    })
+    const t = await mountNode(
+      <Agents focused sessionId="test-sid"
+              onSwitchProfile={(home, name) => switched.push([home, name])} />,
+      { gw, width: 200 },
+    )
+    await until(t, () => t.frame().includes("Profiles (2)"))
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Profile · coder (active)"))
+    for (const c of "update") await act(async () => { await t.keys.typeText(c) })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Update distribution?"))
+    await act(async () => { await t.keys.typeText("y") })
+
+    await until(t, () => t.frame().includes("permission denied"))
+    expect(switched).toEqual([])
     t.destroy()
   })
 
