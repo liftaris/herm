@@ -12,6 +12,11 @@ const LOG_MAX = 200
 const LOG_PREVIEW = 240
 const STARTUP_MS = 15_000
 const REQUEST_MS = 120_000
+const WS_CONNECTING = 0
+const WS_OPEN = 1
+const WS_CLOSING = 2
+const WS_CLOSED = 3
+const decoder = new TextDecoder()
 
 /** Locate the hermes-agent source tree (gateway + hermes_cli live here).
  *  Default: ~/.hermes/hermes-agent (where `hermes update` installs it).
@@ -30,6 +35,35 @@ export function hermesAgentRoot(): string {
 type Pending = {
   resolve: (v: unknown) => void
   reject: (e: Error) => void
+}
+
+export function gatewayUrl(): string | null {
+  return process.env.HERM_GATEWAY_URL?.trim()
+    || process.env.HERMES_TUI_GATEWAY_URL?.trim()
+    || null
+}
+
+export function websocketUrl(raw: string): string {
+  const url = new URL(raw)
+  if (url.protocol === "http:") url.protocol = "ws:"
+  else if (url.protocol === "https:") url.protocol = "wss:"
+  else if (url.protocol !== "ws:" && url.protocol !== "wss:")
+    throw new Error(`unsupported gateway URL protocol: ${url.protocol}`)
+  const prefix = url.pathname.replace(/\/+$/, "")
+  if (!prefix.endsWith("/api/ws")) url.pathname = `${prefix}/api/ws`
+  return url.toString()
+}
+
+function redact(raw: string): string {
+  try {
+    const url = new URL(raw)
+    if (url.username || url.password) {
+      url.username = "***"
+      url.password = ""
+    }
+    if (url.search) url.search = "?***"
+    return url.toString()
+  } catch { return "invalid gateway URL" }
 }
 
 export function python(root: string, platform: NodeJS.Platform = process.platform): string {
@@ -60,6 +94,13 @@ function asEvent(v: unknown): GatewayEvent | null {
   return null
 }
 
+function text(raw: unknown): string | null {
+  if (typeof raw === "string") return raw
+  if (raw instanceof ArrayBuffer) return decoder.decode(raw)
+  if (ArrayBuffer.isView(raw)) return decoder.decode(raw)
+  return null
+}
+
 // Read lines from a ReadableStream (Bun subprocess stdout/stderr)
 async function lines(stream: ReadableStream<Uint8Array>, cb: (line: string) => void) {
   const reader = stream.getReader()
@@ -85,6 +126,9 @@ async function lines(stream: ReadableStream<Uint8Array>, cb: (line: string) => v
 
 export class GatewayClient extends EventEmitter {
   private proc: ReturnType<typeof Bun.spawn> | null = null
+  private ws: WebSocket | null = null
+  private link: Promise<void> | null = null
+  private target: string | null = null
   private id = 0
   private logs: string[] = []
   private pending = new Map<string, Pending>()
@@ -135,7 +179,96 @@ export class GatewayClient extends EventEmitter {
     this.pending.clear()
   }
 
+  private connect(raw: string) {
+    const cwd = process.env.HERMES_CWD || process.cwd()
+    let url: string
+    try { url = websocketUrl(raw) }
+    catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[startup] websocket failed: ${message}`)
+      this.push({ type: "gateway.stderr", payload: { line: message } })
+      if (this.sub) this.emit("exit", null)
+      else this.exit = null
+      return
+    }
+
+    const safe = redact(url)
+    let ws: WebSocket
+    try { ws = new WebSocket(url) }
+    catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[startup] websocket failed (${safe}): ${message}`)
+      this.push({ type: "gateway.stderr", payload: { line: message } })
+      if (this.sub) this.emit("exit", null)
+      else this.exit = null
+      return
+    }
+
+    this.target = raw
+    this.ws = ws
+    let settled = false
+    this.link = new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }, { once: true })
+      ws.addEventListener("error", () => {
+        if (settled) return
+        settled = true
+        reject(new Error("gateway websocket connection failed"))
+        try { ws.close() } catch {}
+      }, { once: true })
+      ws.addEventListener("close", event => {
+        if (settled) return
+        settled = true
+        reject(new Error(`gateway websocket closed (${event.code}) during connect`))
+      }, { once: true })
+    })
+    this.link.catch(() => {})
+
+    this.timer = setTimeout(() => {
+      if (this.ok || this.ws !== ws) return
+      this.log(`[startup] timed out (websocket=${safe}, cwd=${cwd})`)
+      this.push({ type: "gateway.start_timeout", payload: { cwd, python: "websocket" } })
+      this.ws = null
+      this.link = null
+      this.fail(new Error("gateway websocket startup timeout"))
+      try { ws.close() } catch {}
+      if (this.sub) this.emit("exit", null)
+      else this.exit = null
+    }, STARTUP_MS)
+
+    ws.addEventListener("message", event => {
+      if (this.ws !== ws) return
+      const raw = text(event.data)
+      if (!raw) return
+      try { this.dispatch(JSON.parse(raw)) }
+      catch {
+        const preview = raw.trim().slice(0, LOG_PREVIEW) || "(empty)"
+        this.log(`[protocol] malformed websocket: ${preview}`)
+        this.push({ type: "gateway.protocol_error", payload: { preview } })
+      }
+    })
+    ws.addEventListener("error", () => {
+      if (this.ws !== ws) return
+      const line = `websocket transport error (${safe})`
+      this.log(`[gateway] ${line}`)
+      this.push({ type: "gateway.stderr", payload: { line } })
+    })
+    ws.addEventListener("close", event => {
+      if (this.ws !== ws) return
+      if (this.timer) { clearTimeout(this.timer); this.timer = null }
+      this.ws = null
+      this.link = null
+      this.fail(new Error(`gateway websocket closed${event.code ? ` (${event.code})` : ""}`))
+      if (this.sub) this.emit("exit", event.code)
+      else this.exit = event.code
+    })
+  }
+
   start() {
+    const raw = gatewayUrl()
     const root = this.root()
     const bin = python(root)
     const cwd = process.env.HERMES_CWD || process.cwd()
@@ -152,14 +285,26 @@ export class GatewayClient extends EventEmitter {
     this.buf = []
     this.exit = undefined
 
+    let restarted = false
     const previous = this.proc
     if (previous) {
       this.proc = null
       this.fail(new Error("gateway restarted"))
+      restarted = true
       try { previous.kill() } catch {}
     }
 
+    const socket = this.ws
+    if (socket) {
+      this.ws = null
+      this.link = null
+      this.target = null
+      if (!restarted) this.fail(new Error("gateway restarted"))
+      try { socket.close() } catch {}
+    }
+
     if (this.timer) clearTimeout(this.timer)
+    if (raw) { this.connect(raw); return }
     this.timer = setTimeout(() => {
       if (this.ok) return
       this.log(`[startup] timed out (python=${bin}, cwd=${cwd})`)
@@ -258,6 +403,8 @@ export class GatewayClient extends EventEmitter {
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    const raw = gatewayUrl()
+    if (raw) return this.remote<T>(raw, method, params)
     if (!this.proc || this.proc.exitCode !== null) this.start()
 
     const stdin = this.proc?.stdin
@@ -294,8 +441,56 @@ export class GatewayClient extends EventEmitter {
     })
   }
 
+  private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
+    try { websocketUrl(raw) }
+    catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
+    if (this.target !== raw || !this.ws || this.ws.readyState === WS_CLOSING || this.ws.readyState === WS_CLOSED)
+      this.start()
+
+    const rid = `r${++this.id}`
+    const merged = this.sid && params.session_id === undefined
+      ? { session_id: this.sid, ...params }
+      : params
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (this.pending.delete(rid)) reject(new Error(`timeout: ${method}`))
+      }, REQUEST_MS)
+      this.pending.set(rid, {
+        reject: e => { clearTimeout(timeout); reject(e) },
+        resolve: value => { clearTimeout(timeout); resolve(value as T) },
+      })
+
+      const send = async () => {
+        try {
+          if (this.ws?.readyState === WS_CONNECTING) await this.link
+          if (!this.pending.has(rid)) return
+          if (!this.ws || this.ws.readyState !== WS_OPEN) throw new Error(`gateway not connected: ${method}`)
+          const frame = encode({ jsonrpc: "2.0", id: rid, method, params: merged })
+          if (frame.issues.length) {
+            const detail = frame.issues.map(x => `${x.path}:${x.count}`).join(", ")
+            this.log(`[wire] sanitized invalid unicode for ${method}: ${detail}`)
+          }
+          this.ws.send(frame.text)
+        } catch (err) {
+          clearTimeout(timeout)
+          if (this.pending.delete(rid)) reject(err instanceof Error ? err : new Error(String(err)))
+        }
+      }
+      void send()
+    })
+  }
+
   kill() {
     this.proc?.kill()
+    const ws = this.ws
+    if (!ws) return
+    this.ws = null
+    this.link = null
+    this.target = null
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    this.fail(new Error("gateway websocket closed"))
+    try { ws.close() } catch {}
   }
 
   get ready(): boolean {

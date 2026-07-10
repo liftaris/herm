@@ -60,14 +60,15 @@ Attach to an already-running Hermes dashboard instead of spawning a local
 gateway subprocess:
 
 ```bash
-herm --gateway-url http://127.0.0.1:9119/
+herm --gateway-url 'ws://127.0.0.1:9119/api/ws?token=...'
 ```
 
-Dashboard origins are normalized to the websocket endpoint automatically, so
-`http://.../` becomes `ws://.../api/ws` and `https://.../` becomes
-`wss://.../api/ws`. If the URL has no `token` query parameter, Herm fetches the
-dashboard root and uses its embedded session token. For persistent configuration,
-set `HERM_GATEWAY_URL` or the upstream-compatible `HERMES_TUI_GATEWAY_URL`.
+HTTP(S) dashboard URLs are normalized to WS(S) and `/api/ws` is appended after
+any path prefix. The URL must already carry a reusable `token` or `internal`
+credential. OAuth-gated dashboards use single-use tickets and require an
+authenticated client that can mint a fresh ticket for every reconnect. For
+persistent configuration, set `HERM_GATEWAY_URL`. Herm also accepts the
+upstream-injected `HERMES_TUI_GATEWAY_URL`.
 
 Or run from source:
 

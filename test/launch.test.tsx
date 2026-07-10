@@ -22,6 +22,9 @@ describe("parseLaunch", () => {
     [["-c", "--no-splash"], { mode: "resume", splash: false }],
     [["--profile", "coder"], { mode: "new", profile: "coder", splash: true }],
     [["--resume", "abc123", "--profile", "coder"], { mode: "resume", profile: "coder", sid: "abc123", splash: true }],
+    [["--gateway-url", "wss://gateway.test/api/ws?token=abc", "--profile", "coder", "--resume", "abc123"], {
+      gateway: "wss://gateway.test/api/ws?token=abc", mode: "resume", profile: "coder", sid: "abc123", splash: true,
+    }],
   ]
   for (const [argv, want] of cases) {
     test(JSON.stringify(argv), () => expect(parseLaunch(argv)).toEqual(want))
@@ -30,6 +33,11 @@ describe("parseLaunch", () => {
   test("requires a profile name", () => {
     expect(() => parseLaunch(["--profile"])).toThrow("--profile requires a name")
     expect(() => parseLaunch(["--profile", "--resume"])).toThrow("--profile requires a name")
+  })
+
+  test("requires a gateway URL", () => {
+    expect(() => parseLaunch(["--gateway-url"])).toThrow("--gateway-url requires a URL")
+    expect(() => parseLaunch(["--gateway-url", "--resume"])).toThrow("--gateway-url requires a URL")
   })
 })
 

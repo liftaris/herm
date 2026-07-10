@@ -41,6 +41,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
   process.exit(0)
 }
 const launch = parseLaunch(argv)
+if (launch.gateway) process.env.HERM_GATEWAY_URL = launch.gateway
 if (launch.profile) {
   const home = resolveProfileHome(launch.profile)
   if (!home) throw new Error(`profile not found: ${launch.profile}`)

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "fs"
 import { delimiter, join, resolve } from "path"
 import { tmpdir } from "os"
-import { GatewayClient, hermesAgentRoot, python } from "../src/context/gateway-client"
+import { GatewayClient, gatewayUrl, hermesAgentRoot, python, websocketUrl } from "../src/context/gateway-client"
 
 class FakeSocket extends EventTarget {
   static list: FakeSocket[] = []
@@ -49,12 +49,7 @@ const withEnv = <T>(key: string, value: string | undefined, fn: () => T): T => {
 const tmp = () => mkdtempSync(join(tmpdir(), "herm-gateway-"))
 
 const original = globalThis.WebSocket
-const fetcher = globalThis.fetch
 const timer = globalThis.setTimeout
-
-function stub(fn: (url: Parameters<typeof fetch>[0]) => Promise<Response>): typeof fetch {
-  return Object.assign(fn, { preconnect: fetcher.preconnect })
-}
 
 beforeEach(() => {
   FakeSocket.list = []
@@ -65,7 +60,6 @@ afterEach(() => {
   delete process.env.HERMES_TUI_GATEWAY_URL
   if (original) globalThis.WebSocket = original
   else delete (globalThis as { WebSocket?: unknown }).WebSocket
-  globalThis.fetch = fetcher
   globalThis.setTimeout = timer
 })
 
@@ -374,6 +368,27 @@ describe("GatewayClient", () => {
 })
 
 describe("GatewayClient websocket attach mode", () => {
+  test("startup timeout closes a wedged websocket and reports exit", async () => {
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => (
+      timer(args[0], args[1] === 15_000 ? 0 : args[1], ...args.slice(2))
+    )) as typeof setTimeout
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=abc"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const gw = new GatewayClient()
+    let exits = 0
+    gw.on("exit", () => { exits++ })
+    gw.drain()
+
+    gw.start()
+    await Bun.sleep(20)
+
+    expect(FakeSocket.list[0]?.readyState).toBe(3)
+    expect(gw.tail()).toContain("timed out")
+    expect(gw.tail()).not.toContain("token=abc")
+    expect(exits).toBe(1)
+    gw.kill()
+  })
+
   test("times out websocket requests while the socket is still connecting", async () => {
     globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => (
       timer(args[0], args[1] === 120_000 ? 0 : args[1], ...args.slice(2))
@@ -411,12 +426,8 @@ describe("GatewayClient websocket attach mode", () => {
   })
 
   test("ignores events from superseded websocket connections", async () => {
-    process.env.HERM_GATEWAY_URL = "http://gateway.test/"
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=first"
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
-    let calls = 0
-    globalThis.fetch = stub(async () => new Response(
-      `<script>window.__HERMES_SESSION_TOKEN__="tok-${++calls}"</script>`,
-    ))
     const gw = new GatewayClient()
     const events: string[] = []
 
@@ -431,8 +442,8 @@ describe("GatewayClient websocket attach mode", () => {
     await first
     gw.drain()
 
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=second"
     const second = gw.request("session.create")
-    await Bun.sleep(0)
     const next = FakeSocket.list[1]!
     old.message(JSON.stringify({ jsonrpc: "2.0", method: "event", params: { type: "tool.start" } }))
     next.open()
@@ -471,7 +482,25 @@ describe("GatewayClient websocket attach mode", () => {
     ws.message(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { ok: true } }))
 
     expect(events).toEqual(["gateway.ready", "tool.start"])
+    expect(gw.ready).toBe(true)
     await expect(req).resolves.toEqual({ ok: true })
+    gw.kill()
+  })
+
+  test("socket close emits exit and reconnects with the reusable URL", () => {
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?internal=abc"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const gw = new GatewayClient()
+    let exits = 0
+    gw.on("exit", () => { exits++ })
+    gw.drain()
+
+    gw.start()
+    FakeSocket.list[0]!.close(1006)
+    expect(exits).toBe(1)
+    gw.start()
+    expect(FakeSocket.list).toHaveLength(2)
+    expect(FakeSocket.list[1]?.url).toBe("ws://gateway.test/api/ws?internal=abc")
     gw.kill()
   })
 
@@ -485,60 +514,26 @@ describe("GatewayClient websocket attach mode", () => {
     gw.kill()
   })
 
-  test("normalizes dashboard origins and fills missing websocket token", async () => {
-    process.env.HERM_GATEWAY_URL = "http://127.0.0.1:9119/"
+  test("HERM_GATEWAY_URL overrides the upstream fallback", () => {
+    process.env.HERM_GATEWAY_URL = "ws://primary.test/api/ws?token=one"
+    process.env.HERMES_TUI_GATEWAY_URL = "ws://fallback.test/api/ws?token=two"
+    expect(gatewayUrl()).toBe("ws://primary.test/api/ws?token=one")
+  })
+
+  test("normalizes secure dashboard prefixes without replacing credentials", () => {
+    process.env.HERM_GATEWAY_URL = "https://gateway.test/hermes/?internal=abc"
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
-    globalThis.fetch = stub(async url => {
-      expect(String(url)).toBe("http://127.0.0.1:9119/")
-      return new Response('<script>window.__HERMES_SESSION_TOKEN__="tok 1"</script>')
-    })
     const gw = new GatewayClient()
 
-    const req = gw.request("session.create")
-    await Bun.sleep(0)
-    expect(FakeSocket.list[0]?.url).toBe("ws://127.0.0.1:9119/api/ws?token=tok+1")
-    FakeSocket.list[0]?.open()
-    await Bun.sleep(0)
-    const frame = JSON.parse(FakeSocket.list[0]!.sent[0]!) as { id: string }
-    FakeSocket.list[0]?.message(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { ok: true } }))
-
-    await expect(req).resolves.toEqual({ ok: true })
+    gw.start()
+    expect(FakeSocket.list[0]?.url).toBe("wss://gateway.test/hermes/api/ws?internal=abc")
     gw.kill()
   })
 
-  test("normalizes secure dashboard origins without replacing existing tokens", async () => {
-    process.env.HERM_GATEWAY_URL = "https://gateway.test?token=abc"
-    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
-    globalThis.fetch = stub(async () => { throw new Error("fetch should not run") })
-    const gw = new GatewayClient()
-
-    const req = gw.request("session.create")
-    await Bun.sleep(0)
-    expect(FakeSocket.list[0]?.url).toBe("wss://gateway.test/api/ws?token=abc")
-    FakeSocket.list[0]?.open()
-    await Bun.sleep(0)
-    const frame = JSON.parse(FakeSocket.list[0]!.sent[0]!) as { id: string }
-    FakeSocket.list[0]?.message(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: null }))
-
-    await expect(req).resolves.toBeNull()
-    gw.kill()
-  })
-
-  test("normalizes root websocket URLs", async () => {
-    process.env.HERM_GATEWAY_URL = "ws://127.0.0.1:9119/"
-    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
-    globalThis.fetch = stub(async () => new Response('<script>window.__HERMES_SESSION_TOKEN__="tok"</script>'))
-    const gw = new GatewayClient()
-
-    const req = gw.request("session.create")
-    await Bun.sleep(0)
-    expect(FakeSocket.list[0]?.url).toBe("ws://127.0.0.1:9119/api/ws?token=tok")
-    FakeSocket.list[0]?.open()
-    await Bun.sleep(0)
-    const frame = JSON.parse(FakeSocket.list[0]!.sent[0]!) as { id: string }
-    FakeSocket.list[0]?.message(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: true }))
-
-    await expect(req).resolves.toBe(true)
-    gw.kill()
+  test("normalizes root URLs and rejects unsupported protocols", () => {
+    expect(websocketUrl("ws://127.0.0.1:9119/?token=abc"))
+      .toBe("ws://127.0.0.1:9119/api/ws?token=abc")
+    expect(() => websocketUrl("ftp://gateway.test/?token=abc"))
+      .toThrow("unsupported gateway URL protocol: ftp:")
   })
 })

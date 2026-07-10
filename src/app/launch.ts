@@ -19,18 +19,26 @@ const pkgVersion = (d: string, up = 4): string => {
 export const VERSION = pkgVersion(import.meta.dirname)
 
 export type Launch =
-  | { mode: "new"; profile?: string; splash?: boolean }
-  | { mode: "resume"; profile?: string; sid?: string; splash?: boolean }
+  | { gateway?: string; mode: "new"; profile?: string; splash?: boolean }
+  | { gateway?: string; mode: "resume"; profile?: string; sid?: string; splash?: boolean }
 
 /** Parse process argv (everything after the script path). No deps. */
 export function parseLaunch(argv: readonly string[]): Launch {
   let splash = true
+  let gateway: string | undefined
   let mode: "new" | "resume" = "new"
   let profile: string | undefined
   let sid: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--no-splash") { splash = false; continue }
+    if (a === "--gateway-url") {
+      const next = argv[i + 1]
+      if (!next || next.startsWith("-")) throw new Error("--gateway-url requires a URL")
+      gateway = next
+      i++
+      continue
+    }
     if (a === "--profile") {
       const next = argv[i + 1]
       if (!next || next.startsWith("-")) throw new Error("--profile requires a name")
@@ -45,8 +53,8 @@ export function parseLaunch(argv: readonly string[]): Launch {
       if (next && !next.startsWith("-")) { sid = next; i++ }
     }
   }
-  if (mode === "resume") return { mode, ...(profile ? { profile } : {}), ...(sid ? { sid } : {}), splash }
-  return { mode, ...(profile ? { profile } : {}), splash }
+  if (mode === "resume") return { ...(gateway ? { gateway } : {}), mode, ...(profile ? { profile } : {}), ...(sid ? { sid } : {}), splash }
+  return { ...(gateway ? { gateway } : {}), mode, ...(profile ? { profile } : {}), splash }
 }
 
 export const HELP = `\
@@ -57,6 +65,7 @@ Usage:
   herm -c, --continue     resume the last real TUI session
   herm --resume [id]      resume last (or the given) session
   herm --profile <name>   start once with a profile; do not change the default
+  herm --gateway-url URL  connect to a dashboard/tui_gateway WebSocket
   herm --no-splash        skip the launch splash
   herm -v, --version      print version
   herm -h, --help         show this help
