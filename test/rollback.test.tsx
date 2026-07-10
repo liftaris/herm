@@ -20,6 +20,15 @@ const Host = () => {
 }
 
 describe("Rollback dialog", () => {
+  test("list failure surfaces the gateway error", async () => {
+    const gw = new MockGateway({
+      "rollback.list": () => { throw new Error("rollback unavailable") },
+    })
+    const t = await mountNode(<Host />, { gw })
+    await until(t, () => t.frame().includes("rollback unavailable"))
+    t.destroy()
+  })
+
   test("disabled → shows notice", async () => {
     const gw = new MockGateway({
       "rollback.list": () => ({ enabled: false, checkpoints: [] }),
@@ -68,6 +77,62 @@ describe("Rollback dialog", () => {
     expect(restored).toEqual(["b2c3d4e5f6a1"])
     await until(t, () => t.frame().includes("Restored b2c3d4e"))
     expect(t.frame()).not.toContain("2 files changed")
+    t.destroy()
+  })
+
+  test("late diff cannot mismatch the selected restore target", async () => {
+    let stale!: (value: unknown) => void
+    const restored: string[] = []
+    const gw = new MockGateway({
+      "rollback.list": () => ({ enabled: true, checkpoints: POINTS }),
+      "rollback.diff": p => p.hash === POINTS[0].hash
+        ? new Promise(resolve => { stale = resolve })
+        : { stat: "fresh stat", diff: "fresh second diff" },
+      "rollback.restore": p => { restored.push(p.hash as string); return { success: true } },
+    })
+    const t = await mountNode(<Host />, { gw, width: 140, height: 40 })
+    await until(t, () => t.frame().includes("2 checkpoints"))
+
+    act(() => t.keys.pressEnter())
+    await until(t, () => gw.calls.filter(c => c.method === "rollback.diff").length === 1)
+    act(() => t.keys.pressArrow("down"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("fresh second diff"))
+    expect(t.frame()).toContain("b2c3d4e")
+
+    stale({ stat: "stale stat", diff: "stale first diff" })
+    await act(async () => { await Bun.sleep(0) })
+    await t.settle()
+    expect(t.frame()).toContain("fresh second diff")
+    expect(t.frame()).not.toContain("stale first diff")
+
+    await act(async () => { await t.keys.typeText("r") })
+    await act(async () => { await t.keys.typeText("y") })
+    await until(t, () => restored.length === 1)
+    expect(restored).toEqual([POINTS[1].hash])
+    t.destroy()
+  })
+
+  test("restore confirmation cannot dispatch twice", async () => {
+    let restores = 0
+    const gw = new MockGateway({
+      "rollback.list": () => ({ enabled: true, checkpoints: POINTS }),
+      "rollback.diff": () => ({ stat: "stat", diff: "diff" }),
+      "rollback.restore": () => { restores++; return new Promise(() => {}) },
+    })
+    const t = await mountNode(<Host />, { gw })
+    await until(t, () => t.frame().includes("2 checkpoints"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("[r] restore"))
+    await act(async () => { await t.keys.typeText("r") })
+    await until(t, () => t.frame().includes("Restore this checkpoint?"))
+
+    act(() => {
+      t.keys.pressKey("y")
+      t.keys.pressKey("y")
+    })
+    await until(t, () => restores > 0)
+    expect(restores).toBe(1)
     t.destroy()
   })
 

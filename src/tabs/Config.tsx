@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, memo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, memo, type ReactNode } from "react";
 import { useKeyboard } from "@opentui/react";
 import { useKeys, handleListKey, useFollow } from "../keys";
-import { useGateway } from "../context/gateway";
+import { useGateway, useGatewayRestart } from "../context/gateway";
 import { useTheme } from "../theme";
 import { useToast } from "../ui/toast";
 import { useDialog } from "../ui/dialog";
@@ -157,9 +157,12 @@ const SlotRow = memo((p: { id: string; s: Slot; on: boolean }) => {
 export const Config = memo((props: { focused?: boolean }) => {
   const theme = useTheme().theme;
   const gw = useGateway();
+  const restartGateway = useGatewayRestart();
   const toast = useToast();
   const dialog = useDialog();
   const [raw, setRaw] = useState<Record<string, unknown>>({});
+  const rawRef = useRef(raw);
+  rawRef.current = raw;
   const [original, setOriginal] = useState<Record<string, unknown>>({});
   const [yaml, setYaml] = useState("");
   const [mode, setMode] = useState<"form" | "yaml">("form");
@@ -172,26 +175,33 @@ export const Config = memo((props: { focused?: boolean }) => {
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState<"categories" | "fields">("categories");
   const [managed, setManaged] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const loads = useRef(0);
 
   useEffect(() => { managedSystem().then(setManaged) }, []);
 
   const load = useCallback(() => {
+    const gen = ++loads.current;
     gw.request<{ config?: Record<string, unknown> }>("config.get", { key: "full" })
       .then(res => {
+        if (loads.current !== gen) return;
         const parsed = res.config ?? {};
-        setRaw(structuredClone(parsed));
+        rawRef.current = structuredClone(parsed);
+        setRaw(rawRef.current);
         setOriginal(structuredClone(parsed));
         setYaml(yamlStringify(parsed));
         setErr({});
+        setLoadErr(null);
       })
-      .catch(() => {
-        setRaw({});
-        setOriginal({});
-        setYaml("");
+      .catch(e => {
+        if (loads.current === gen) setLoadErr(e instanceof Error ? e.message : String(e));
       });
   }, [gw]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { loads.current++; };
+  }, [load]);
 
   const all = buildFields(raw);
   const grouped = all.reduce((map, f) => {
@@ -225,8 +235,10 @@ export const Config = memo((props: { focused?: boolean }) => {
   const nChanged = all.reduce((n, f) => n + (changed(f.key) ? 1 : 0), 0);
 
   const update = (key: string, val: unknown) => {
-    const next = structuredClone(raw);
+    loads.current++;
+    const next = structuredClone(rawRef.current);
     setNested(next, key, val);
+    rawRef.current = next;
     setRaw(next);
     setYaml(yamlStringify(next));
   };
@@ -244,7 +256,7 @@ export const Config = memo((props: { focused?: boolean }) => {
       toast.show({ variant: "error", message: `${nErr} invalid field${nErr === 1 ? "" : "s"}` });
       return;
     }
-    const target = mode === "yaml" ? (yamlParse(yaml) ?? {}) : raw;
+    const target = mode === "yaml" ? (yamlParse(yaml) ?? {}) : rawRef.current;
     const flat = flatten(target as Record<string, unknown>);
     const diffs = flat
       .filter(([key]) => JSON.stringify(getNested(target as Record<string, unknown>, key)) !== JSON.stringify(getNested(original, key)))
@@ -261,8 +273,8 @@ export const Config = memo((props: { focused?: boolean }) => {
     if (!ok) return;
     const res = await writeConfig(gw, diffs.map(d => ({ key: d.key, to: d.to })));
     for (const w of res.warnings) toast.show({ variant: "info", message: `${w.key}: ${w.msg}` });
-    load();
     if (res.failed.length > 0) {
+      load();
       toast.show({
         variant: "error",
         message: `${res.failed.length} failed: ${res.failed.map(f => f.key).join(", ")}`,
@@ -270,11 +282,17 @@ export const Config = memo((props: { focused?: boolean }) => {
       return;
     }
     const landed = diffs.filter(d => res.ok.includes(d.key));
-    const miss = await verifyWrite(gw, landed.map(d => ({ key: d.key, to: d.to })));
+    const miss = await verifyWrite(gw, landed.map(d => ({ key: d.key, to: d.to })))
+      .catch(e => {
+        toast.show({ variant: "error", message: e instanceof Error ? e.message : String(e) });
+        return null;
+      });
+    if (!miss) return;
     if (miss.length > 0) {
       toast.show({ variant: "error", message: `Write didn't land: ${miss.join(", ")}` });
       return;
     }
+    load();
     const tier = maxEffect(res.ok);
     if (tier === "restart") {
       const go = await openConfirm(dialog, {
@@ -283,7 +301,7 @@ export const Config = memo((props: { focused?: boolean }) => {
         yes: "restart now", no: "later", danger: true,
       });
       if (go) {
-        gw.start();
+        restartGateway("resume");
         toast.show({ variant: "info", message: "Gateway restarting…" });
       }
       return;
@@ -322,6 +340,7 @@ export const Config = memo((props: { focused?: boolean }) => {
     openModelPicker(dialog, gw, {
       title: s.kind === "main" ? "Set main model" : `Set auxiliary · ${s.label}`,
       onApply: async (prov, model) => {
+        const token = dialog.version();
         const r = await assign(gw, s.key, prov, model);
         if (r.failed.length)
           return toast.show({ variant: "error", message: r.failed.map(f => f.err).join("; ") });
@@ -329,7 +348,7 @@ export const Config = memo((props: { focused?: boolean }) => {
           message: s.kind === "main" ? `main → ${prov} · ${model}` : `${s.key} → ${prov} · ${model}` });
         if (r.warning) toast.show({ variant: "warning", message: r.warning });
         load();
-        if (s.kind === "main") await warnStaleAux(prov);
+        if (s.kind === "main" && dialog.version() === token) await warnStaleAux(prov);
       },
     });
   }, [gw, dialog, toast, load, managed, raw]);
@@ -370,9 +389,10 @@ export const Config = memo((props: { focused?: boolean }) => {
     if (keys.match("config.save", key)) return void save();
 
     if (mode === "yaml") {
-      if (key.name === "backspace") { setYaml(prev => prev.slice(0, -1)); return; }
-      if (key.name === "return") { setYaml(prev => prev + "\n"); return; }
+      if (key.name === "backspace") { loads.current++; setYaml(prev => prev.slice(0, -1)); return; }
+      if (key.name === "return") { loads.current++; setYaml(prev => prev + "\n"); return; }
       if (key.raw && key.raw.length === 1 && key.raw >= " ") {
+        loads.current++;
         setYaml(prev => prev + key.raw);
         return;
       }
@@ -455,7 +475,10 @@ export const Config = memo((props: { focused?: boolean }) => {
     const matched = handleListKey(keys, key, {
       count, setSel: setCursor, ...follow.opts,
       onRefresh: () => { load(); toast.show({ variant: "info", message: "Reloaded", duration: 1000 }) },
-      onToggle: writable && f?.type === "boolean" ? () => update(f.key, !f.value) : undefined,
+      onToggle: writable && f?.type === "boolean" ? () => {
+        const value = getNested(rawRef.current, f.key);
+        update(f.key, !(value === undefined ? f.value : value));
+      } : undefined,
       onActivate: f && writable && (f.type === "string" || f.type === "number")
         ? () => { setEditing(true); setBuf(String(f.value ?? "")) }
         : undefined,
@@ -463,7 +486,8 @@ export const Config = memo((props: { focused?: boolean }) => {
     if (matched || !f || !writable) return;
 
     if (f.type === "select" && f.options) {
-      const idx = f.options.indexOf(String(f.value));
+      const value = getNested(rawRef.current, f.key);
+      const idx = f.options.indexOf(String(value === undefined ? f.value : value));
       if (key.raw === "l" || key.raw === "]") {
         update(f.key, f.options[(idx + 1) % f.options.length]);
         return;
@@ -478,7 +502,7 @@ export const Config = memo((props: { focused?: boolean }) => {
   if (mode === "yaml") {
     return (
       <box flexDirection="column" flexGrow={1} minWidth={0}>
-      <TabShell title="Config · YAML">
+      <TabShell title="Config · YAML" error={loadErr}>
         <scrollbox scrollY flexGrow={1}>
           <text wrapMode="word">
             <span fg={theme.text}>{yaml}</span>
@@ -545,7 +569,7 @@ export const Config = memo((props: { focused?: boolean }) => {
         <TabShell
           title={onSlots ? "models · applies immediately"
             : searching ? "Search" : nChanged > 0 ? `${active} · ${nChanged} unsaved` : active}
-          grow={3} focus={focus === "fields" || searching}
+          grow={3} focus={focus === "fields" || searching} error={loadErr}
         >
           {managed ? (
             <box height={1} flexDirection="row" gap={1}>

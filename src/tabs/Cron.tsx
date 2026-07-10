@@ -10,71 +10,33 @@ import { TabShell } from "../ui/shell";
 import { HintBar } from "../ui/hint";
 import { KVBlock } from "../ui/kv";
 import { Col, Hdr, VBAR } from "../ui/table";
-import { openTextPrompt } from "../dialogs/text-prompt";
+import { openCronEditor } from "../dialogs/cron-editor";
 import { ago, until } from "../ui/fmt";
 import { readCronOutput, type CronOutput } from "../service/hermes-home";
+import { cronModel, type CronAction, type CronJob, type RawJob } from "./cron-model";
 
-type CronJob = {
-  id: string
-  name: string
-  prompt: string
-  schedule: string
-  enabled: boolean
-  state: string
-  deliver: string
-  repeat?: string
-  last_run?: string
-  next_run?: string
-  last_status?: "ok" | "error"
-  last_error?: string
-  paused_reason?: string
-  model?: string
-  skills?: string[]
-  workdir?: string
-  script?: string
+type Caps = { update: boolean; fields?: ReadonlySet<string> }
+type ListResponse = {
+  jobs?: RawJob[]
+  actions?: string[]
+  fields?: string[]
+  capabilities?: { update?: boolean; advanced?: boolean; advanced_create?: boolean }
 }
 
-type RawJob = {
-  job_id?: string
-  id?: string
-  name?: string
-  prompt_preview?: string
-  prompt?: string
-  schedule?: string
-  enabled?: boolean
-  state?: string
-  deliver?: string
-  repeat?: string
-  last_run_at?: string
-  next_run_at?: string
-  last_status?: string
-  last_delivery_error?: string
-  paused_reason?: string
-  model?: string
-  skills?: string[]
-  workdir?: string
-  script?: string
-}
+const FIELDS = [
+  "script", "no_agent", "attach_to_session", "skills", "provider", "model",
+  "base_url", "context_from", "enabled_toolsets", "workdir", "deliver", "repeat",
+]
 
-const normalize = (j: RawJob): CronJob => ({
-  id: j.job_id ?? j.id ?? "",
-  name: j.name ?? "",
-  prompt: j.prompt ?? j.prompt_preview ?? "",
-  schedule: j.schedule ?? "",
-  enabled: j.enabled ?? true,
-  state: j.state ?? "scheduled",
-  deliver: j.deliver ?? "local",
-  repeat: j.repeat,
-  last_run: j.last_run_at,
-  next_run: j.next_run_at,
-  last_status: j.last_status === "ok" || j.last_status === "error" ? j.last_status : undefined,
-  last_error: j.last_delivery_error,
-  paused_reason: j.paused_reason,
-  model: j.model,
-  skills: j.skills,
-  workdir: j.workdir,
-  script: j.script,
-})
+const caps = (r: ListResponse): Caps => {
+  const actions = new Set(r.actions ?? [])
+  const fields = new Set((r.fields ?? []).filter(f => FIELDS.includes(f)))
+  const broad = r.capabilities?.advanced === true || r.capabilities?.advanced_create === true
+  return {
+    update: r.capabilities?.update === true || actions.has("update"),
+    fields: broad && fields.size === 0 ? undefined : fields,
+  }
+}
 
 // gateway returns ISO timestamps; shared `ago`/`until` want unix seconds
 const sec = (iso?: string) => iso ? new Date(iso).getTime() / 1000 : null
@@ -141,8 +103,14 @@ const DetailPanel = memo((props: { job: CronJob; reloadKey: number }) => {
             ["Last Run", j.last_run ? `${last(j.last_run)}  ·  ${j.last_status ?? "?"}` : "never",
               j.last_status === "error" ? theme.error : undefined],
             ["Next Run", j.enabled ? next(j.next_run) : "paused"],
+            ["Provider", j.provider],
             ["Model", j.model],
+            ["Base URL", j.base_url],
+            ["No Agent", j.no_agent ? "true" : undefined],
+            ["Attach Session", j.attach_to_session ? "true" : undefined],
             ["Skills", j.skills?.length ? j.skills.join(", ") : undefined],
+            ["Context", j.context_from?.length ? j.context_from.join(", ") : undefined],
+            ["Toolsets", j.enabled_toolsets?.length ? j.enabled_toolsets.join(", ") : undefined],
             ["Workdir", j.workdir],
             ["Script", j.script],
             ["Paused", j.paused_reason],
@@ -171,39 +139,64 @@ export const Cron = memo((props: { focused?: boolean }) => {
   const toast = useToast();
   const dims = useTerminalDimensions();
   const [jobs, setJobs] = useState<CronJob[]>([]);
+  const [cap, setCap] = useState<Caps>({ update: false, fields: new Set() });
   const [sel, setSel] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const loadGen = useRef(0);
 
   const live = useRef({ jobs, sel });
   live.current = { jobs, sel };
 
   const load = useCallback(() => {
-    gw.request<{ jobs?: RawJob[] }>("cron.manage", { action: "list" })
+    const gen = ++loadGen.current;
+    gw.request<ListResponse>("cron.manage", { action: "list" })
       .then(res => {
-        setJobs((res.jobs ?? []).map(normalize));
+        if (loadGen.current !== gen) return;
+        setJobs((res.jobs ?? []).map(cronModel.normalize));
+        setCap(caps(res));
         setErr(null);
         setReloadKey(k => k + 1);
       })
-      .catch(e => setErr(e instanceof Error ? e.message : String(e)));
+      .catch(e => {
+        if (loadGen.current === gen) setErr(e instanceof Error ? e.message : String(e));
+      });
   }, [gw]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { loadGen.current++; };
+  }, [load]);
 
   const create = useCallback(async () => {
-    const schedule = await openTextPrompt(dialog, {
-      title: "New Cron Job", label: "Schedule (cron expr or 'every 30m')",
+    const r = await openCronEditor(dialog, {
+      mode: "create",
+      initial: cronModel.draft(),
+      fields: cap.fields,
     });
-    if (schedule === null) return;
-    const prompt = await openTextPrompt(dialog, {
-      title: "New Cron Job", label: "Prompt",
-    });
-    if (prompt === null) return;
-    // name left blank — server derives one from the prompt text.
-    gw.request("cron.manage", { action: "add", name: "", schedule, prompt })
+    if (!r) return;
+    gw.request("cron.manage", cronModel.payload("add", r.draft, { fields: cap.fields }))
       .then(() => { toast.show({ variant: "success", message: "Job created" }); load(); })
       .catch((e: Error) => toast.show({ variant: "error", message: e.message }));
-  }, [gw, dialog, toast, load]);
+  }, [gw, dialog, toast, load, cap.fields]);
+
+  const edit = useCallback(async () => {
+    const j = live.current.jobs[live.current.sel];
+    if (j && !cap.update) {
+      toast.show({ variant: "warning", message: "Current gateway has no cron.manage update; this job is read-only here." });
+      return;
+    }
+    const r = await openCronEditor(dialog, {
+      mode: j ? "edit" : "create",
+      initial: cronModel.draft(j ?? undefined),
+      fields: cap.fields,
+    });
+    if (!r) return;
+    const action: CronAction = j && cap.update ? "update" : "add";
+    gw.request("cron.manage", cronModel.payload(action, r.draft, { fields: cap.fields }))
+      .then(() => { toast.show({ variant: "success", message: action === "add" ? "Job created" : "Job updated" }); load(); })
+      .catch((e: Error) => toast.show({ variant: "error", message: e.message }));
+  }, [gw, dialog, toast, load, cap]);
 
   const toggle = useCallback(() => {
     const j = live.current.jobs[live.current.sel];
@@ -239,6 +232,7 @@ export const Cron = memo((props: { focused?: boolean }) => {
     onToggle: toggle,
     onDelete: remove,
     onNew: create,
+    onActivate: edit,
     onRefresh: () => { load(); toast.show({ variant: "info", message: "Reloaded", duration: 1000 }) },
   });
 
@@ -284,6 +278,7 @@ export const Cron = memo((props: { focused?: boolean }) => {
     <HintBar pairs={[
       ["↑↓", "nav"],
       [keys.print("list.new"), "new"],
+      [keys.print("list.activate"), "advanced"],
       [keys.print("list.toggle"), "pause/resume"],
       [keys.print("list.delete"), "delete"],
       [keys.print("list.refresh"), "refresh"],

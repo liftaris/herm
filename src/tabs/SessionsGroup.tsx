@@ -4,6 +4,7 @@ import type { SessionInfo } from "../context/wire"
 import { Sessions } from "./Sessions"
 import { Context } from "./Context"
 import { Analytics } from "./Analytics"
+import { Journey } from "./Journey"
 import { SubTabBar } from "../components/tabs/SubTabBar"
 import { SUB_TABS, SESSIONS_TAB } from "../app/tabs"
 
@@ -53,6 +54,9 @@ export const SessionsGroup = memo((props: Props) => {
         </Pane>
         <Pane visible={props.sub === 2}>
           <Analytics focused={!!props.focused && props.sub === 2} />
+        </Pane>
+        <Pane visible={props.sub === 3}>
+          <Journey focused={!!props.focused && props.sub === 3} />
         </Pane>
       </box>
     </box>

@@ -600,20 +600,30 @@ describe("chainTip() — returns tip regardless of message_count", () => {
 
 afterAll(() => { wipe(); resetDb() })
 
-describe("peek() — tail N messages for a session", () => {
+describe("peek() — first/last transcript preview", () => {
   beforeEach(resetMessagesSchema)
   afterAll(wipe)
 
-  test("returns last N rows chronological, content SUBSTR'd", () => {
+  test("returns every row when the transcript has four or fewer messages", () => {
     const db = seed()
     addMessageProvenanceColumns(db)
     sess(db, "px", "tui", 1700000000)
-    for (let i = 0; i < 8; i++) msg(db, "px", "user", `m${i}`, 1000 + i)
+    for (let i = 0; i < 4; i++) msg(db, "px", "user", `m${i}`, 1000 + i)
     db.close()
 
-    const rows = peek("px", 3)
-    expect(rows.map(r => r.content)).toEqual(["m5", "m6", "m7"])
+    const rows = peek("px")
+    expect(rows.map(r => r.content)).toEqual(["m0", "m1", "m2", "m3"])
     expect(rows[0].role).toBe("user")
+  })
+
+  test("returns first two and last two rows for longer transcripts", () => {
+    const db = seed()
+    addMessageProvenanceColumns(db)
+    sess(db, "px", "tui", 1700000000)
+    for (let i = 0; i < 5; i++) msg(db, "px", "user", `m${i}`, 1000 + i)
+    db.close()
+
+    expect(peek("px").map(r => r.content)).toEqual(["m0", "m1", "m3", "m4"])
   })
 
   test("includes tool_name and tool_calls columns", () => {

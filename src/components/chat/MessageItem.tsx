@@ -79,37 +79,6 @@ function useClick(fn?: () => void) {
   }
 }
 
-/** Themed vertical bar next to the body. `side` picks left or right. */
-const Gutter = memo(({ color, glyph = "│", side = "left", children }: {
-  color: RGBA
-  glyph?: string
-  side?: "left" | "right"
-  children: React.ReactNode
-}) => {
-  const bar = (
-    <box
-      width={2}
-      flexShrink={0}
-      border={[side]}
-      borderColor={color}
-      customBorderChars={{
-        topLeft: glyph, bottomLeft: glyph, vertical: glyph,
-        topRight: glyph, bottomRight: glyph, horizontal: "",
-        topT: "", bottomT: "", leftT: "", rightT: "", cross: "",
-      }}
-    />
-  )
-  return (
-    <box flexDirection="row">
-      {side === "left" ? bar : null}
-      <box flexDirection="column" flexGrow={1} flexShrink={1}>
-        {children}
-      </box>
-      {side === "right" ? bar : null}
-    </box>
-  )
-})
-
 export type PromptWire = {
   /** Ref to the single pending prompt card, for key routing. */
   ref: RefObject<PromptCardHandle | null>
@@ -131,12 +100,8 @@ export const MessageItem = memo(({ message, streaming, prompt, onRewind, onPick 
 const SystemMessage = memo(({ message }: { message: Message }) => {
   const theme = useTheme().theme
   return (
-    <box marginBottom={1}>
-      <Gutter color={theme.textMuted} glyph="·">
-        <box minHeight={1}>
-          <text fg={theme.textMuted} wrapMode="word">{extract(message)}</text>
-        </box>
-      </Gutter>
+    <box marginBottom={1} minHeight={1}>
+      <text fg={theme.textMuted} wrapMode="word">{extract(message)}</text>
     </box>
   )
 })
@@ -223,7 +188,7 @@ const AssistantMessage = memo(({ message, streaming, prompt, onPick }: {
   )
 
   const header = [
-    agentName,
+    message.speaker ?? agentName,
     message.usage ? `${tokens(message.usage.input)}→${tokens(message.usage.output)} tok` : null,
     message.duration ? duration(message.duration) : null,
   ].filter(Boolean).join(" · ")

@@ -1,6 +1,5 @@
 import { memo, useMemo } from "react"
 import { MessageItem, type PromptWire } from "./MessageItem"
-import { TypingIndicator } from "./TypingIndicator"
 import { useTheme } from "../../theme"
 import type { Message } from "../../types/message"
 
@@ -52,7 +51,6 @@ export const MessageList = memo(({ messages, streaming, prompt, onRewind, onPick
             />
           </box>
         ))}
-        {streaming && last?.role !== "assistant" && <TypingIndicator />}
       </box>
     </scrollbox>
   )

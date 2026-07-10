@@ -60,4 +60,15 @@ describe("useSlashCommands /quit description", () => {
     expect(quit.aliases).not.toContain("q")
     t.destroy()
   })
+
+  test("keeps /compact canonicalized as a /compress alias", async () => {
+    const { t, ref } = await setup({
+      pairs: [["/compress", "Compress conversation context"]],
+      canon: { "/compact": "/compress" },
+    })
+    const cmd = ref.current!.cmds().find(c => c.name === "compress")!
+    expect(cmd.aliases).toContain("compact")
+    expect(cmd.target).toBe("local")
+    t.destroy()
+  })
 })

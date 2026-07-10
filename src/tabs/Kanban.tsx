@@ -3,11 +3,12 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import type { BorderSides, MouseEvent, ScrollBoxRenderable } from "@opentui/core"
 import {
   boardStateOf, detailOf, tailLogOf, assignees, q, STATUSES,
-  currentBoard, listBoards, resetKanban, patchTask,
-  parseDiagnostics, maxSeverity, sortDiags,
-  type Task, type Status, type Detail, type Board,
-  type Diag, type Severity, type BoardError,
+  currentBoard, listBoards, resetKanban,
+  maxSeverity,
+  type Task, type Status, type Detail, type Board, type BlockKind,
+  type Diag, type Severity, type BoardError, type PatchFields,
 } from "../service/hermes-kanban"
+import { patch as patchTask } from "../io/kanban"
 import { useKeys } from "../keys"
 import { useTheme } from "../theme"
 import { useGateway } from "../context/gateway"
@@ -21,19 +22,19 @@ import { openTextPrompt } from "../dialogs/text-prompt"
 import { openCreateTask } from "../dialogs/new-task"
 import { TabShell } from "../ui/shell"
 import { HintBar } from "../ui/hint"
-import { KVBlock } from "../ui/kv"
 import { ago, trunc } from "../ui/fmt"
 import { load as loadPrefs, set as setPref, type KanbanPrefs } from "../context/preferences"
 import { parseDispatchResult, dispatchFailures, dispatchGuarded, dispatchVariant, dispatchDetails } from "../service/kanban-dispatch"
 import { FileLink } from "../components/ui/FileLink"
 import type { Source } from "../service/hermes-home"
+import { useKanbanDiagnostics } from "./kanban-diagnostics"
 
 // Operator surface for every kanban board under ~/.hermes/.
 //
 // Boards stack vertically; each is a collapsible section (▾/▸
 // header + filter-chip bar + capped-height row of status columns).
 // Reads are sidecar SQLite per board. Writes split by kind:
-//   - title/body/priority: direct bun:sqlite (patchTask) inside a
+//   - title/body/priority: worker-backed bun:sqlite inside a
 //     BEGIN IMMEDIATE txn + task_events row, mirroring dashboard
 //     plugin_api PATCH /tasks/:id.
 //   - status transitions / assign / link / edit / comment / dispatch:
@@ -59,6 +60,7 @@ import type { Source } from "../service/hermes-home"
 
 type Sh = { stdout: string; stderr: string; code: number }
 type Tier = "head" | "filter" | "grid" | "pane"
+type BlockSupport = "unknown" | "yes" | "no"
 
 // Column scrollbars hidden — the column border + ↑↓ are enough
 // signal at kanban card density; the bar steals a col per status.
@@ -116,15 +118,6 @@ const pass = (t: Task, m: Mask) =>
   admits(m.who, t.assignee ?? null as unknown as string)
   && admits(m.pri, t.priority)
 
-/** Index parsed diagnostic rows by task_id for O(1) lookup from the
- *  card renderer. Empty rows are stripped so maxSeverity() on an
- *  absent map entry is always null. */
-const indexDiags = (rows: ReturnType<typeof parseDiagnostics>): Map<string, Diag[]> => {
-  const out = new Map<string, Diag[]>()
-  for (const r of rows)
-    if (r.diagnostics.length > 0) out.set(r.task_id, sortDiags(r.diagnostics))
-  return out
-}
 // Masks + open-set round-trip through ~/.config/herm/tui.json under
 // the `kanban` key. Keyed by slug. Maps/Sets flatten to entry arrays
 // for JSON.
@@ -183,11 +176,52 @@ type SevTheme = { warning: import("@opentui/core").RGBA; error: import("@opentui
 const sevColor = (sev: Severity, theme: SevTheme) =>
   sev === "warning" ? theme.warning : theme.error
 
+const KIND: Record<BlockKind, string> = {
+  dependency: "dependency-wait",
+  needs_input: "needs-input",
+  capability: "capability",
+  transient: "transient",
+}
+const MARK: Record<BlockKind, string> = {
+  dependency: "dep",
+  needs_input: "input",
+  capability: "cap",
+  transient: "tmp",
+}
+
+const blockText = (t: Pick<Task, "block_kind" | "block_recurrences">): string => {
+  const kind = t.block_kind ? KIND[t.block_kind] : ""
+  const loop = t.block_recurrences > 1 ? `loop×${t.block_recurrences}` : ""
+  if (kind && loop) return `${kind} · ${loop}`
+  return kind || loop
+}
+
+const cardMark = (t: Pick<Task, "block_kind" | "block_recurrences">): string => {
+  if (t.block_kind) return `[${MARK[t.block_kind]}${t.block_recurrences > 1 ? `×${t.block_recurrences}` : ""}]`
+  return t.block_recurrences > 1 ? `[loop×${t.block_recurrences}]` : ""
+}
+
+const statusText = (t: Task): string => {
+  const block = blockText(t)
+  return block ? `${t.status} · ${block}` : t.status
+}
+
+const supportsKind = (r: Sh): boolean =>
+  r.code === 0 && /--kind\b/.test(r.stdout)
+
+const unsupportedKind = (r: Sh): boolean => {
+  const s = `${r.stderr}\n${r.stdout}`.toLowerCase()
+  return r.code !== 0 && s.includes("--kind")
+    && (s.includes("unrecognized") || s.includes("no such option")
+      || s.includes("unknown option") || s.includes("invalid option"))
+}
+
 const Card = memo((p: {
   id: string; t: Task; on: boolean; hov: boolean; sev: Severity | null
   onHover: () => void; onPick: () => void
 }) => {
   const theme = useTheme().theme
+  const mark = cardMark(p.t)
   return (
     <box id={p.id} height={2} flexDirection="row" paddingLeft={1}
          border={RULE} borderStyle="single" borderColor={theme.borderSubtle}
@@ -195,6 +229,7 @@ const Card = memo((p: {
          onMouseDown={p.onPick}
          onMouseMove={p.onHover}>
       <Ticker active={p.on || p.hov} fg={p.on ? theme.accent : theme.text}>
+        {mark ? <><span fg={theme.warning}>{mark}</span>{" "}</> : null}
         {p.sev
           ? <><span fg={sevColor(p.sev, theme)}>{SEV_GLYPH[p.sev]}</span>{" "}</>
           : null}
@@ -410,7 +445,7 @@ const SidePane = memo((p: { pane: Pane; on: boolean; sel: number; diags: Diag[] 
       <box height={1}>
         <text>
           <span fg={theme.primary}><strong>{d.id}</strong></span>
-          <span fg={theme.textMuted}>{`  ·  ${p.pane.slug}  ·  ${d.status}  ·  ${ago(d.updated_at)}`}</span>
+          <span fg={theme.textMuted}>{`  ·  ${p.pane.slug}  ·  ${statusText(d)}  ·  ${ago(d.updated_at)}`}</span>
         </text>
       </box>
       <scrollbox scrollY flexGrow={1}>
@@ -430,7 +465,7 @@ const SidePane = memo((p: { pane: Pane; on: boolean; sel: number; diags: Diag[] 
             p.on && cur === "assignee" ? "Enter pick" : undefined)}
           {srow("priority", "Priority", d.priority ? `P${d.priority}` : "—",
             p.on && cur === "priority" ? "Enter select" : undefined)}
-          {srow("status", "Status", d.status,
+          {srow("status", "Status", statusText(d),
             p.on && cur === "status" ? "Enter change" : undefined)}
           {srow("parents", "Parents", d.parents.length ? d.parents.join(", ") : "—",
             p.on && cur === "parents" ? "Enter add/remove" : undefined)}
@@ -439,6 +474,14 @@ const SidePane = memo((p: { pane: Pane; on: boolean; sel: number; diags: Diag[] 
                 <box width={10} flexShrink={0}><text fg={theme.textMuted}>Children</text></box>
                 <box flexGrow={1} minWidth={0} overflow="hidden">
                   <text fg={theme.textMuted}>{d.children.join(", ")}</text>
+                </box>
+              </box>
+            : null}
+          {d.project_id
+            ? <box height={1} flexDirection="row" paddingLeft={1}>
+                <box width={10} flexShrink={0}><text fg={theme.textMuted}>Project</text></box>
+                <box flexGrow={1} minWidth={0} overflow="hidden">
+                  <text fg={theme.textMuted}>{d.project_id}</text>
                 </box>
               </box>
             : null}
@@ -662,12 +705,8 @@ export const Kanban = memo((props: { focused?: boolean }) => {
   const [data, setData] = useState<Map<string, ReturnType<typeof boardStateOf>>>(
     () => new Map(boards.map(b => [b.slug, boardStateOf(b.slug)])),
   )
-  // diag[slug][taskId] = Diag[]. Shape keeps card lookup O(1) and
-  // lets the SidePane pull the current task's diagnostics without a
-  // second fetch. Missing slug / missing taskId both mean "none".
-  const [diags, setDiags] = useState<Map<string, Map<string, Diag[]>>>(
-    () => new Map(),
-  )
+  const diagnostics = useKanbanDiagnostics(gw)
+  const diags = diagnostics.data
   const [masks, setMasks] = useState<Map<string, Mask>>(() =>
     maskFromPrefs(loadPrefs().kanban?.masks))
   const [open, setOpen] = useState<Set<string>>(() => {
@@ -689,6 +728,7 @@ export const Kanban = memo((props: { focused?: boolean }) => {
   const [chip, setChip] = useState(0)
   const [paneSel, setPaneSel] = useState(0)
   const [pane, setPane] = useState<Pane | null>(null)
+  const [blocks, setBlocks] = useState<Map<string, BlockSupport>>(() => new Map())
 
   const outer = useRef<ScrollBoxRenderable | null>(null)
 
@@ -698,20 +738,8 @@ export const Kanban = memo((props: { focused?: boolean }) => {
     setData(new Map(bs.map(b => [b.slug, boardStateOf(b.slug)])))
     setPane(p => p?.kind === "detail"
       ? (d => d ? { ...p, d } : null)(detailOf(p.slug, p.d.id)) : p)
-    // Diagnostics: one shell.exec per board. Compute in parallel; any
-    // per-board failure (CLI absent, board not initialized) falls back
-    // to "no diags" for that slug rather than blocking the others. A
-    // single request object is built per-board so stale fetches from a
-    // previous `load()` can't clobber newer results — `setDiags`
-    // replaces the map atomically per call.
-    Promise.all(bs.map(b =>
-      gw.request<Sh>("shell.exec",
-          { command: `hermes kanban --board ${q(b.slug)} diagnostics --json` })
-        .then(r => r.code === 0 ? parseDiagnostics(r.stdout) : [])
-        .catch(() => [] as ReturnType<typeof parseDiagnostics>)
-        .then(rows => [b.slug, indexDiags(rows)] as const),
-    )).then(pairs => setDiags(new Map(pairs)))
-  }, [gw])
+    void diagnostics.refresh(bs)
+  }, [diagnostics.refresh])
   useEffect(load, [load])
 
   // Persist masks + open set whenever either changes.
@@ -808,17 +836,54 @@ export const Kanban = memo((props: { focused?: boolean }) => {
     }).catch((e: Error) => void toast.show({ variant: "error", message: trunc(e.message, 120) })),
   [gw, toast, load, at])
 
-  // Direct bun:sqlite patch — title/body/priority only. Mirrors
-  // dashboard PATCH /tasks/:id. Refreshes on success (no shell round-trip).
-  const patchDirect = useCallback((id: string, p: Parameters<typeof patchTask>[2], ok: string) => {
-    try {
-      if (!patchTask(at, id, p))
-        return void toast.show({ variant: "error", message: `no such task: ${id}` })
+  const blockSupport = useCallback(async (s: string): Promise<BlockSupport> => {
+    const cur = blocks.get(s)
+    if (cur === "yes" || cur === "no") return cur
+    const next = await gw.request<Sh>("shell.exec", { command: `hermes kanban --board ${q(s)} block --help` })
+      .then(r => supportsKind(r) ? "yes" as const : "no" as const)
+      .catch(() => "no" as const)
+    setBlocks(m => {
+      const out = new Map(m)
+      out.set(s, next)
+      return out
+    })
+    return next
+  }, [blocks, gw])
+
+  const runBlock = useCallback((t: Task, reason: string | null, kind: string) => {
+    const slug = live.current.at
+    const arg = reason ? ` ${q(reason)}` : ""
+    const suffix = kind ? ` --kind ${q(kind)}` : ""
+    const ok = kind === "dependency" ? `Dependency-wait ${t.id}` : `Blocked ${t.id}`
+    return gw.request<Sh>("shell.exec", { command: `hermes kanban --board ${q(slug)} block ${q(t.id)}${arg}${suffix}` })
+      .then(r => {
+        if (unsupportedKind(r) && kind) {
+          setBlocks(m => {
+            const out = new Map(m)
+            out.set(slug, "no")
+            return out
+          })
+          throw new Error("active Hermes CLI does not support typed block kinds; choose generic block")
+        }
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim())
+        toast.show({ variant: "success", message: ok })
+        resetKanban()
+        load()
+        return r.stdout
+      }).catch((e: Error) => void toast.show({ variant: "error", message: trunc(e.message, 120) }))
+  }, [gw, toast, load])
+
+  const writes = useRef(Promise.resolve())
+  const patchDirect = useCallback((id: string, p: PatchFields, ok: string) => {
+    const board = at
+    writes.current = writes.current.then(async () => {
+      if (!await patchTask(board, id, p))
+        throw new Error(`no such task: ${id}`)
       toast.show({ variant: "success", message: ok })
       load()
-    } catch (e) {
-      toast.show({ variant: "error", message: trunc((e as Error).message, 120) })
-    }
+    }).catch((e: Error) => {
+      toast.show({ variant: "error", message: trunc(e.message, 120) })
+    })
   }, [at, toast, load])
   // enterTop/enterBottom land on the first/last reachable tier of
   // the target section so ↑↓ read as one continuous vertical walk.
@@ -903,6 +968,7 @@ export const Kanban = memo((props: { focused?: boolean }) => {
         d.parent ? `--parent ${q(d.parent)}` : "",
         d.triage ? "--triage" : "",
         d.tenant ? `--tenant ${q(d.tenant)}` : "",
+        d.project ? `--project ${q(d.project)}` : "",
         ws,
         d.maxRuntime ? `--max-runtime ${q(d.maxRuntime)}` : "",
         ...d.skills.map(s => `--skill ${q(s)}`),
@@ -1084,6 +1150,35 @@ export const Kanban = memo((props: { focused?: boolean }) => {
     })
   }, [dialog, sh, toast])
 
+  const block = useCallback((t: Task) => {
+    void blockSupport(live.current.at).then(support => {
+      if (support === "no") {
+        return openTextPrompt(dialog, {
+          title: `Block ${t.id}`,
+          label: "Reason (optional; generic block — active CLI has no --kind)",
+        }).then(r => { if (r !== null) void runBlock(t, r, "") })
+      }
+      const opts: Array<{ title: string; value: string; description?: string }> = [
+        { title: "generic", value: "", description: "legacy block without --kind" },
+        { title: "needs input", value: "needs_input", description: "human answer required" },
+        { title: "dependency", value: "dependency", description: "wait in todo until parents finish" },
+        { title: "capability", value: "capability", description: "missing tool, credential, or profile capability" },
+        { title: "transient", value: "transient", description: "temporary/flaky condition" },
+      ]
+      dialog.replace(
+        <DialogSelect title={`Block kind for ${t.id}`} options={opts}
+          current={t.block_kind ?? ""} filterable={false}
+          onSelect={async o => {
+            dialog.clear()
+            const r = await openTextPrompt(dialog, {
+              title: `Block ${t.id}`, label: "Reason (optional, posted as comment)",
+            })
+            if (r !== null) void runBlock(t, r, o.value)
+          }} />,
+      )
+    })
+  }, [dialog, blockSupport, runBlock])
+
   const editStatus = useCallback((t: Task) => {
     // Only expose transitions the CLI has verbs for. 'unblock' covers
     // both blocked (human-waiting) and scheduled (time-waiting) per
@@ -1093,7 +1188,7 @@ export const Kanban = memo((props: { focused?: boolean }) => {
     if (t.status !== "done") opts.push({ title: "done", value: "complete",
       description: "mark complete (prompts for result)" })
     if (t.status !== "blocked") opts.push({ title: "blocked", value: "block",
-      description: "mark blocked (prompts for reason)" })
+      description: "mark blocked (choose kind, prompts for reason)" })
     if (t.status !== "scheduled") opts.push({ title: "scheduled", value: "schedule",
       description: "park until externally unblocked (prompts for reason)" })
     if (t.status === "blocked" || t.status === "scheduled")
@@ -1114,14 +1209,7 @@ export const Kanban = memo((props: { focused?: boolean }) => {
             void sh(`complete ${q(t.id)}${flag}`, `Completed ${t.id}`)
             return
           }
-          if (o.value === "block") {
-            const r = await openTextPrompt(dialog, {
-              title: `Block ${t.id}`, label: "Reason (optional, posted as comment)",
-            })
-            const arg = r ? ` ${q(r)}` : ""
-            void sh(`block ${q(t.id)}${arg}`, `Blocked ${t.id}`)
-            return
-          }
+          if (o.value === "block") return block(t)
           if (o.value === "schedule") {
             const r = await openTextPrompt(dialog, {
               title: `Schedule ${t.id}`, label: "Reason (optional, posted as comment)",
@@ -1135,7 +1223,7 @@ export const Kanban = memo((props: { focused?: boolean }) => {
           if (o.value === "archive") return void archive(t)
         }} />,
     )
-  }, [dialog, sh, archive])
+  }, [dialog, sh, archive, block])
 
   const editParents = useCallback((t: Task) => {
     // Parents live on Detail, not Task; look up the current pane

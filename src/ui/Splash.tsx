@@ -63,10 +63,11 @@ export function Splash(p: SplashProps) {
   const [tip, setTip] = useState(() => randomTip())
 
   const behind = p.info?.behind
+  const count = behind == null || behind < 0 ? null : behind === 0 ? "up to date" : `${behind} behind`
   const sub = [
     `v${VERSION}`,
     p.info ? `hermes ${p.info.agentVersion ?? "?"}` : "…",
-    behind == null ? null : behind === 0 ? "up to date" : `${behind} behind`,
+    count,
     p.info?.model,
   ].filter(Boolean).join("  ·  ")
 

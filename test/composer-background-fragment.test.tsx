@@ -8,7 +8,12 @@ const noop = () => {}
 
 // Surface the bg API next to the Composer so the test can register/unregister
 // without reaching into provider internals.
-const Host = ({ grab, composerRef }: { grab: (api: ReturnType<typeof useBackground>) => void; composerRef: React.Ref<ComposerHandle> }) => {
+const Host = ({ grab, composerRef, subagents = 0, streaming = false }: {
+  grab: (api: ReturnType<typeof useBackground>) => void
+  composerRef: React.Ref<ComposerHandle>
+  subagents?: number
+  streaming?: boolean
+}) => {
   const api = useBackground()
   grab(api)
   return (
@@ -17,7 +22,8 @@ const Host = ({ grab, composerRef }: { grab: (api: ReturnType<typeof useBackgrou
       focused
       canSubmitPrompt={true}
       ready
-      streaming={false}
+      streaming={streaming}
+      subagents={subagents}
       cmds={[]}
       model="test-model"
       onSend={noop}
@@ -26,12 +32,12 @@ const Host = ({ grab, composerRef }: { grab: (api: ReturnType<typeof useBackgrou
   )
 }
 
-const mountComposer = async () => {
+const mountComposer = async (opts: { subagents?: number; streaming?: boolean } = {}) => {
   const ref = createRef<ComposerHandle>()
   let api: ReturnType<typeof useBackground> | undefined
   const t = await mountNode(
     <BackgroundProvider>
-      <Host grab={a => { api = a }} composerRef={ref} />
+      <Host grab={a => { api = a }} composerRef={ref} subagents={opts.subagents} streaming={opts.streaming} />
     </BackgroundProvider>,
     { width: 80, height: 8 },
   )
@@ -69,6 +75,30 @@ describe("Composer background fragment", () => {
     await until(t, () => t.frame().includes("▶ 1"))
     act(() => { get().unregister("a") })
     await until(t, () => !t.frame().includes("▶"))
+    t.destroy()
+  })
+
+  test("shows idle subagent auto-resume hint", async () => {
+    const { t } = await mountComposer({ subagents: 1 })
+    expect(t.frame()).toContain("↩ resumes when subagent finishes")
+    t.destroy()
+  })
+
+  test("pluralizes idle subagent auto-resume hint", async () => {
+    const { t } = await mountComposer({ subagents: 3 })
+    expect(t.frame()).toContain("↩ resumes when 3 subagents finish")
+    t.destroy()
+  })
+
+  test("hides subagent auto-resume hint while streaming", async () => {
+    const { t } = await mountComposer({ subagents: 2, streaming: true })
+    expect(t.frame()).not.toContain("resumes when")
+    t.destroy()
+  })
+
+  test("hides subagent auto-resume hint when count is zero", async () => {
+    const { t } = await mountComposer({ subagents: 0 })
+    expect(t.frame()).not.toContain("resumes when")
     t.destroy()
   })
 })

@@ -514,7 +514,15 @@ describe("EikonStudio tab", () => {
     resetToolsetsCache()
     gen.setProbe(async () => ({ image: true, video: false }))
     let got: { kind: string; prompt: string } | undefined
-    gen.setImpl(async (kind, prompt) => { got = { kind, prompt }; return { path: genPath } })
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    gen.setImpl(async (kind, prompt) => {
+      calls++
+      got = { kind, prompt }
+      await gate
+      return { path: genPath }
+    })
     let sub = 2
     await using t = await mountNode(
       <EikonGroup focused sub={sub} setSub={i => { sub = i }} />,
@@ -547,7 +555,10 @@ describe("EikonStudio tab", () => {
     await t.settle()
     act(() => t.keys.pressEnter())
     await t.settle()
-    act(() => t.keys.pressEnter())
+    act(() => { t.keys.pressEnter(); t.keys.pressEnter() })
+    await until(t, () => calls > 0)
+    expect(calls).toBe(1)
+    release()
     // Adoption lands in source/idle.png (st='idle' and base exists so role='idle').
     await until(t, () => {
       const f = Bun.file(join(eikon.ensure("owlgen").source, "idle.png"))

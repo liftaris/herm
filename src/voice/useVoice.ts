@@ -2,9 +2,9 @@
 // Manages runtime voice state: enabled/recording/processing flags,
 // record key parsing from config, and actions (toggle, record start/stop).
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useRef } from "react"
 import type { VoiceState, VoiceToggleResponse, VoiceRecordResponse } from "./types"
-import { parseVoiceRecordKey, formatVoiceRecordKey, DEFAULT_VOICE_KEY } from "./platform"
+import { parseVoiceRecordKey, formatVoiceRecordKey } from "./platform"
 
 /** Shape of the gateway client's `request` method — subset needed for voice. */
 type GwRpc = <T>(method: string, params: Record<string, unknown>) => Promise<T>
@@ -23,6 +23,8 @@ export type VoiceApi = {
   setProcessing: (v: boolean) => void
   /** Update record key from config (called after voice.toggle response). */
   setRecordKey: (raw: string | undefined) => void
+  /** Reset runtime-only state after the gateway process is replaced. */
+  reset: () => void
   /** Formatted display string for the record key (e.g. "Ctrl+B"). */
   keyLabel: string
   /** Callback for voice transcript — inserts text into composer. */
@@ -37,8 +39,20 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
   const [recordKeyRaw, setRecordKeyRaw] = useState<string>()
   const [tts, setTts] = useState(false)
   const [onTranscript, setTranscript] = useState<((text: string) => void) | null>(null)
+  const pending = useRef(0)
+  const recordGen = useRef(0)
+  const toggleGen = useRef(0)
   const setOnTranscript = useCallback((fn: ((text: string) => void) | null) =>
     setTranscript(fn ? () => fn : null), [])
+  const reset = useCallback(() => {
+    toggleGen.current++
+    recordGen.current++
+    pending.current = 0
+    setEnabled(false)
+    setRecording(false)
+    setProcessing(false)
+    setTts(false)
+  }, [])
 
   const recordKey = useMemo(
     () => parseVoiceRecordKey(recordKeyRaw),
@@ -55,18 +69,29 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
   }), [enabled, recording, processing, recordKey, tts])
 
   const toggle = useCallback(async (action: string, sid: string) => {
+    const current = ++toggleGen.current
     try {
       const r = await gw<VoiceToggleResponse>("voice.toggle", {
         action,
         session_id: sid,
       })
-      if (r.enabled !== undefined) setEnabled(r.enabled)
+      if (toggleGen.current !== current) return
+      if (r.enabled !== undefined) {
+        setEnabled(r.enabled)
+        if (!r.enabled) {
+          recordGen.current++
+          setRecording(false)
+          setProcessing(false)
+        }
+      }
       if (r.tts !== undefined) setTts(r.tts)
       if (r.record_key) setRecordKeyRaw(r.record_key)
       const label = formatVoiceRecordKey(parseVoiceRecordKey(r.record_key))
       const ttsMsg = r.tts ? " · tts on" : ""
-      sys(`voice ${r.enabled ? "on" : "off"}${ttsMsg} [${label}]`)
+      const details = action === "status" && r.details?.trim() ? ` · ${r.details.trim()}` : ""
+      sys(`voice ${r.enabled ? "on" : "off"}${ttsMsg} [${label}]${details}`)
     } catch (e) {
+      if (toggleGen.current !== current) return
       sys(`voice: ${e instanceof Error ? e.message : "gateway error"}`)
     }
   }, [gw, sys])
@@ -76,6 +101,9 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
       sys("voice: mode is off — enable with /voice on")
       return
     }
+    if (pending.current) return
+    const current = ++recordGen.current
+    pending.current = current
     const starting = !recording
     const action = starting ? "start" : "stop"
     // Optimistic UI update
@@ -90,6 +118,7 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
         action,
         session_id: sid,
       })
+      if (recordGen.current !== current) return
       // Reconcile on failure
       if (starting && r.status !== "recording") {
         setRecording(false)
@@ -99,8 +128,11 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
         }
       }
     } catch (e) {
-      if (starting) setRecording(false)
+      if (recordGen.current !== current) return
+      setRecording(!starting)
       sys(`voice error: ${e instanceof Error ? e.message : "gateway error"}`)
+    } finally {
+      if (pending.current === current) pending.current = 0
     }
   }, [enabled, recording, gw, sys])
 
@@ -108,6 +140,7 @@ export function useVoice(gw: GwRpc, sys: (text: string) => void): VoiceApi {
     state, toggle, record,
     setEnabled, setRecording, setProcessing,
     setRecordKey: setRecordKeyRaw,
+    reset,
     keyLabel,
     onTranscript, setOnTranscript,
   }

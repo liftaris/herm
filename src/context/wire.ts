@@ -23,6 +23,7 @@ export type GatewayEvent = ({
   | { type: "gateway.start_timeout"; payload?: { cwd?: string; python?: string } }
   | { type: "gateway.protocol_error"; payload?: { preview?: string } }
   | { type: "session.info"; payload: SessionInfo }
+  | { type: "session.title"; payload: { session_id?: string; title?: string } }
   | { type: "skin.changed"; payload?: GatewaySkin }
   | { type: "message.start"; payload?: undefined }
   | { type: "message.delta"; payload?: { text?: string; rendered?: string } }
@@ -30,6 +31,8 @@ export type GatewayEvent = ({
   | { type: "thinking.delta"; payload?: { text?: string } }
   | { type: "reasoning.delta"; payload?: { text?: string; verbose?: boolean } }
   | { type: "reasoning.available"; payload?: { text?: string; verbose?: boolean } }
+  | { type: "moa.reference"; payload?: { label?: string; text?: string; index?: number; count?: number } }
+  | { type: "moa.aggregating"; payload?: { aggregator?: string } }
   | { type: "status.update"; payload?: { text?: string; kind?: string } }
   | { type: "notification.show"; payload?: NotificationShowPayload }
   | { type: "notification.clear"; payload?: NotificationClearPayload }
@@ -199,14 +202,18 @@ export type SessionInfo = {
   context_max?: number
   context_used?: number
   credential_warning?: string
+  install_warning?: string
+  running?: boolean
   yolo?: boolean
   mcp_servers?: McpServer[]
   /** hermes-agent version string (e.g. "1.14.2-dev+abc123") */
   release_date?: string
-  /** commits behind origin/main; null = unknown, 0 = up to date */
+  /** commits behind origin/main; null = unknown, negative = update available with unknown count */
   update_behind?: number | null
   /** platform-appropriate update invocation */
   update_command?: string
+  /** Live session title from gateway (avoids redundant session.title RPC) */
+  title?: string
 }
 
 export type SessionCreateResponse = {
@@ -283,12 +290,29 @@ export type SessionUsageResponse = {
   cache_read?: number
   cache_write?: number
   reasoning?: number
+  active_subagents?: number
   cost_usd?: number
   cost_status?: "estimated" | "exact"
   context_used?: number
   context_max?: number
   context_percent?: number
   compressions?: number
+}
+
+export type ContextUsageCategory = {
+  color?: string
+  id: string
+  label: string
+  tokens: number
+}
+
+export type ContextBreakdownResponse = {
+  categories: ContextUsageCategory[]
+  context_max: number
+  context_percent: number
+  context_used: number
+  estimated_total: number
+  model?: string
 }
 
 /** Content part inside a multimodal user turn — upstream stores the raw
@@ -316,6 +340,81 @@ export type CommandsCatalogResponse = {
   skill_count?: number
   warning?: string
 }
+
+export type LearningRun = [text: string, style: string, alpha?: number, hexOverride?: string | null]
+
+export type LearningLabel = {
+  key: string
+  glyph: string
+  label: string
+  meta: string
+  style: string
+  alpha: number
+}
+
+export type LearningLegend = {
+  glyph: string
+  style?: string
+  color?: string
+  label: string
+}
+
+export type LearningNode = {
+  id: string
+  glyph: string
+  label: string
+  fullLabel?: string
+  meta: string
+  body?: string
+  style: string
+}
+
+export type LearningBucket = {
+  index: number
+  label: string
+  date: string
+  skills: number
+  memories: number
+  total: number
+  category: string | null
+  color: string | null
+  nodes: LearningNode[]
+}
+
+export type LearningFramesRequest = {
+  cols?: number
+  rows?: number
+  frames?: number
+}
+
+export type LearningFramesResponse = {
+  frames: Array<{
+    reveal: number
+    date: string
+    visible: number
+    grid: LearningRun[][]
+    labels: LearningLabel[]
+  }>
+  legend: LearningLegend[]
+  categories?: LearningLegend[]
+  buckets?: LearningBucket[]
+  summary: string[]
+  axis: { start: string; end: string }
+  count: number
+  cols: number
+  rows: number
+}
+
+export type LearningDetailRequest = { id: string }
+
+export type LearningDetailResponse =
+  | { ok: true; kind: "memory" | "skill"; id: string; label: string; content: string }
+  | { ok: false; message: string }
+
+export type LearningEditRequest = { id: string; content: string }
+export type LearningDeleteRequest = { id: string }
+
+export type LearningMutationResponse = { ok: boolean; message: string }
 
 export type ConfigSetResponse = {
   value?: string

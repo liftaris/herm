@@ -1,13 +1,11 @@
-// ChafaImage: inline image rendering with graceful degradation.
-// These tests don't exercise real chafa output — the parser and shell
-// pipeline are covered in test/chafa.test.ts and test/chafa-integration.test.tsx.
-// What we test here is the fallback contract: any render failure (missing
-// file, chafa absent) collapses to the plain MediaChip, no error chrome.
-
 import { describe, expect, test } from "bun:test"
-import { existsSync } from "fs"
-import { mountNode } from "./harness"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { act } from "react"
 import { ChafaImage } from "../src/ui/ChafaImage"
+import type { Rendered } from "../src/utils/chafa"
+import { mountNode, until } from "./harness"
 
 const IMG = `${process.env.HOME}/Pictures/ko-fi_banner.png`
 
@@ -31,15 +29,44 @@ describe("ChafaImage fallback", () => {
       <ChafaImage path={IMG} width={40} />,
       { width: 80, height: 20 },
     )
+    await until(t, () => /[▀▄█▌▐░▒▓]/.test(t.frame()))
     const f = t.frame()
-    // Footer with basename + hint
     expect(f).toContain("ko-fi_banner.png")
     expect(f).toContain("collapse")
-    // Some half-block glyph from chafa's output — not a fixed string because
-    // chafa's exact character pick varies by content, but at least one of
-    // these should show up on any non-trivial image.
-    const hasBlock = /[▀▄█▌▐░▒▓]/.test(f)
-    expect(hasBlock).toBe(true)
+    expect(/[▀▄█▌▐░▒▓]/.test(f)).toBe(true)
     t.destroy()
   })
+})
+
+test("ChafaImage paints a chip before asynchronous conversion completes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "herm-chafa-image-"))
+  const path = join(dir, "preview.png")
+  await Bun.write(path, "fixture")
+  let release!: (value: Rendered) => void
+  const gate = new Promise<Rendered>(resolve => { release = resolve })
+  const load = () => gate
+
+  const t = await mountNode(<ChafaImage path={path} chafa load={load} bare />)
+  expect(t.frame()).toContain("preview.png")
+  expect(t.frame()).not.toContain("X")
+
+  await act(async () => { release({ rows: [[{ ch: "X", fg: null, bg: null }]] }); await gate })
+  await until(t, () => t.frame().includes("X"))
+  expect(t.frame()).not.toContain("preview.png")
+  t.destroy()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("late ChafaImage completion is ignored after unmount", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "herm-chafa-image-unmount-"))
+  const path = join(dir, "preview.png")
+  await Bun.write(path, "fixture")
+  let release!: (value: Rendered) => void
+  const gate = new Promise<Rendered>(resolve => { release = resolve })
+  const t = await mountNode(<ChafaImage path={path} chafa load={() => gate} bare />)
+
+  t.destroy()
+  release({ rows: [[{ ch: "X", fg: null, bg: null }]] })
+  await gate
+  rmSync(dir, { recursive: true, force: true })
 })

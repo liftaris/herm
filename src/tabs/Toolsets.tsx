@@ -122,6 +122,10 @@ export const Toolsets = memo((props: { focused?: boolean }) => {
   const [list, setList] = useState<Toolset[]>([]);
   const [sel, setSel] = useState(0);
   const [err, setErr] = useState<string | null>(null);
+  const rev = useRef(0);
+  const loads = useRef(0);
+  const writes = useRef(Promise.resolve());
+  const known = useRef(new Map<string, boolean>());
 
   // Flat nav list derived from grouped sections, so ↑/↓ crosses section
   // boundaries in render order. `live` mirrors for callbacks that must
@@ -132,12 +136,23 @@ export const Toolsets = memo((props: { focused?: boolean }) => {
   live.current = { flat, sel };
 
   const load = useCallback(() => {
+    const gen = ++loads.current;
     gw.request<{ toolsets?: Toolset[] }>("toolsets.list", {})
-      .then(r => { setList(r.toolsets ?? []); setErr(null); })
-      .catch(e => setErr(e instanceof Error ? e.message : String(e)));
+      .then(r => {
+        if (loads.current !== gen) return;
+        const next = r.toolsets ?? [];
+        known.current = new Map(next.map(t => [t.name, t.enabled]));
+        setList(next); setErr(null);
+      })
+      .catch(e => {
+        if (loads.current === gen) setErr(e instanceof Error ? e.message : String(e));
+      });
   }, [gw]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { rev.current++; loads.current++; };
+  }, [load]);
 
   // tools.configure response (tui_gateway/server.py @method("tools.configure")).
   // `enabled_toolsets` is the authoritative post-change list — reconcile
@@ -157,40 +172,52 @@ export const Toolsets = memo((props: { focused?: boolean }) => {
       toast.show({ variant: "warning", message: `${ts.name} is unavailable` });
       return;
     }
-    const action = ts.enabled ? "disable" : "enable";
     const was = ts.enabled;
+    const enabled = !was;
+    const action = enabled ? "enable" : "disable";
+    const gen = ++rev.current;
+    loads.current++;
     // optimistic flip
-    setList(prev => prev.map(t => t.name === ts.name ? { ...t, enabled: !t.enabled } : t));
-    gw.request<ConfigureResult>("tools.configure", { action, names: [ts.name] })
-      .then(r => {
+    live.current = {
+      ...live.current,
+      flat: live.current.flat.map(t => t.name === ts.name ? { ...t, enabled } : t),
+    };
+    setList(prev => prev.map(t => t.name === ts.name ? { ...t, enabled } : t));
+    writes.current = writes.current.then(async () => {
+      try {
+        const r = await gw.request<ConfigureResult>("tools.configure", { action, names: [ts.name] });
+        const authoritative = Array.isArray(r.enabled_toolsets) ? new Set(r.enabled_toolsets) : null;
+        if (authoritative)
+          known.current = new Map(live.current.flat.map(t => [t.name, authoritative.has(t.name)]));
+        if (rev.current !== gen) return;
         if (r.unknown?.includes(ts.name)) {
           // Gateway rejected the name — revert the optimistic flip and tell
           // the user why (matches config.yaml whitelist in hermes_cli/tools_config.py).
-          setList(prev => prev.map(t => t.name === ts.name ? { ...t, enabled: was } : t));
+          setList(prev => prev.map(t => ({ ...t, enabled: known.current.get(t.name) ?? t.enabled })));
           toast.show({ variant: "warning", message: `${ts.name} is not configurable` });
           return;
         }
         if (r.missing_servers?.length && ts.name.includes(":")) {
           const server = ts.name.split(":", 1)[0];
           if (r.missing_servers.includes(server)) {
-            setList(prev => prev.map(t => t.name === ts.name ? { ...t, enabled: was } : t));
+            setList(prev => prev.map(t => ({ ...t, enabled: known.current.get(t.name) ?? t.enabled })));
             toast.show({ variant: "warning", message: `MCP server '${server}' not in config` });
             return;
           }
         }
         // Reconcile from the authoritative list. Tolerant of future shape
         // changes (missing `enabled_toolsets` falls back to `load()`).
-        if (Array.isArray(r.enabled_toolsets)) {
-          const on = new Set(r.enabled_toolsets);
-          setList(prev => prev.map(t => ({ ...t, enabled: on.has(t.name) })));
+        if (authoritative) {
+          setList(prev => prev.map(t => ({ ...t, enabled: authoritative.has(t.name) })));
         } else {
           load();
         }
-      })
-      .catch((e: Error) => {
-        setList(prev => prev.map(t => t.name === ts.name ? { ...t, enabled: was } : t));
-        toast.show({ variant: "error", message: e.message });
-      });
+      } catch (e) {
+        if (rev.current !== gen) return;
+        setList(prev => prev.map(t => ({ ...t, enabled: known.current.get(t.name) ?? t.enabled })));
+        toast.show({ variant: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    });
   }, [gw, toast, load]);
 
   const count = flat.length;

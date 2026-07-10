@@ -10,8 +10,8 @@
 
 import { EventEmitter } from "events"
 import { act, type ReactNode } from "react"
-import { testRender } from "@opentui/react/test-utils"
-import type { MockInput, MockMouse, TestRenderer } from "@opentui/core/testing"
+import { createRoot } from "@opentui/react"
+import { createTestRenderer, type MockInput, type MockMouse, type TestRenderer } from "@opentui/core/testing"
 import { App } from "../src/app"
 import type { Gateway } from "../src/context/gateway"
 import { GatewayProvider } from "../src/context/gateway"
@@ -22,7 +22,6 @@ import { ToastProvider } from "../src/ui/toast"
 import { CommandProvider } from "../src/ui/command"
 import { PluginProvider } from "../src/plugins/runtime"
 import { BackgroundProvider } from "../src/app/background"
-import { EikonPreviewProvider } from "../src/context/eikon-preview"
 import type { HermPlugin } from "../src/plugins/types"
 import type { GatewayEvent } from "../src/context/wire"
 
@@ -144,7 +143,8 @@ type Opts = {
 /** Mount the full <App> under a test renderer with a MockGateway. */
 export async function mount(opts: Opts = {}): Promise<Harness> {
   const gw = opts.gw ?? new MockGateway(opts.handlers)
-  return render(<App gateway={gw} launch={opts.launch ?? { mode: "new", splash: false }} keyOverrides={opts.keyOverrides} />, gw, opts)
+  return render(<App gateway={gw} launch={opts.launch ?? { mode: "new", splash: false }}
+    keyOverrides={opts.keyOverrides} plugins={opts.plugins} />, gw, opts)
 }
 
 /** Mount an arbitrary subtree wrapped in all providers (for component tests). */
@@ -159,9 +159,7 @@ export async function mountNode(node: ReactNode, opts: Opts = {}): Promise<Harne
               <CommandProvider>
                 <PluginProvider plugins={opts.plugins ?? []}>
                   <BackgroundProvider>
-                    <EikonPreviewProvider>
-                      {node}
-                    </EikonPreviewProvider>
+                    {node}
                   </BackgroundProvider>
                 </PluginProvider>
               </CommandProvider>
@@ -175,7 +173,10 @@ export async function mountNode(node: ReactNode, opts: Opts = {}): Promise<Harne
 }
 
 async function render(node: ReactNode, gw: MockGateway, opts: Opts): Promise<Harness> {
-  const setup = await testRender(node, {
+  let root: ReturnType<typeof createRoot> | null = null
+  const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  env.IS_REACT_ACT_ENVIRONMENT = true
+  const setup = await createTestRenderer({
     width: opts.width ?? 160,
     height: opts.height ?? 48,
     // Match index.tsx — we own Ctrl+C routing; the default handler
@@ -185,7 +186,18 @@ async function render(node: ReactNode, gw: MockGateway, opts: Opts): Promise<Har
     // Raw-mode ESC is ambiguous (could prefix an arrow); kitty protocol
     // disambiguates so pressEscape() fires a single clean keypress.
     kittyKeyboard: true,
+    onDestroy() {
+      act(() => {
+        root?.unmount()
+        root = null
+      })
+      env.IS_REACT_ACT_ENVIRONMENT = false
+    },
   })
+  // Match production before root.render() mounts selection-aware scrollboxes.
+  setup.renderer.setMaxListeners(64)
+  root = createRoot(setup.renderer)
+  act(() => { root?.render(node) })
 
   const settle = async () => {
     await act(async () => { await Promise.resolve() })

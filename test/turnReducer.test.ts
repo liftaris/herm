@@ -38,6 +38,19 @@ describe("turnReducer", () => {
     expect(parts[2]).toMatchObject({ content: "after", streaming: true })
   })
 
+  test("reference block is committed before aggregator answer", () => {
+    const s = run([
+      { kind: "message.start" },
+      { kind: "reference", text: "◇ Reference 1/2 — openrouter:openai/gpt-5.5\nParis." },
+      { kind: "message.delta", chunk: "The answer is Paris." },
+      { kind: "message.complete" },
+    ])
+    const parts = last(s).parts
+    expect(kinds(parts)).toEqual(["text", "text"])
+    expect(parts[0]).toMatchObject({ content: "◇ Reference 1/2 — openrouter:openai/gpt-5.5\nParis.", streaming: false })
+    expect(parts[1]).toMatchObject({ content: "The answer is Paris.", streaming: false })
+  })
+
   test("complete seals trailing stream and attaches usage", () => {
     const usage = { input: 10, output: 5, total: 15 }
     const s = run([

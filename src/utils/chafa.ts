@@ -90,7 +90,6 @@ export function hex(c: RGB | null): string | undefined {
 // because we always pass chafa a 4:1 w/h cap and let it pick the actual
 // row count to preserve aspect.
 
-import { spawnSync } from "child_process"
 import { existsSync, statSync } from "fs"
 
 const CHAFA_PATHS = [
@@ -106,6 +105,8 @@ let cachedBin: string | null | undefined = undefined
 /** Locate the chafa binary once per process. null → not installed. */
 export function chafaBin(): string | null {
   if (cachedBin !== undefined) return cachedBin
+  const bin = Bun.which?.("chafa") ?? null
+  if (bin) { cachedBin = bin; return bin }
   for (const p of CHAFA_PATHS) if (existsSync(p)) { cachedBin = p; return p }
   cachedBin = null
   return null
@@ -123,6 +124,7 @@ export function resolveImage(path: string): string | null {
 export type Rendered = { rows: Cell[][] } | { err: string }
 
 const CACHE = new Map<string, Cell[][]>()
+const INFLIGHT = new Map<string, Promise<Rendered>>()
 const CACHE_CAP = 50
 
 function cacheGet(k: string): Cell[][] | undefined {
@@ -142,7 +144,7 @@ function cachePut(k: string, v: Cell[][]): void {
 /** Render an image to parsed cells at the given cell-width. Height is
  *  capped at roughly width/3 so a 2:1-ish image fits most message widths.
  *  Returns { err } on any failure (caller should fall back to MediaChip). */
-export function renderChafa(path: string, width: number, height?: number): Rendered {
+export async function renderChafa(path: string, width: number, height?: number): Promise<Rendered> {
   const bin = chafaBin()
   if (!bin) return { err: "chafa not installed" }
   const full = resolveImage(path)
@@ -154,18 +156,37 @@ export function renderChafa(path: string, width: number, height?: number): Rende
   const key = `${full}:${mtime}:${width}x${h}`
   const cached = cacheGet(key)
   if (cached) return { rows: cached }
+  const hit = INFLIGHT.get(key)
+  if (hit) return hit
 
-  const r = spawnSync(bin, [
-    `--size=${width}x${h}`,
-    "--format=symbols",
-    "--symbols=block",
-    "--colors=full",
-    full,
-  ], { encoding: "utf8", timeout: 5_000 })
-  if (r.error) return { err: r.error.message }
-  if (r.status !== 0) return { err: (r.stderr || `chafa exit ${r.status}`).trim() }
-
-  const rows = parseChafa(r.stdout)
-  cachePut(key, rows)
-  return { rows }
+  const task = (async (): Promise<Rendered> => {
+    try {
+      const proc = Bun.spawn([
+        bin,
+        `--size=${width}x${h}`,
+        "--format=symbols",
+        "--symbols=block",
+        "--colors=full",
+        full,
+      ], { stdout: "pipe", stderr: "pipe" })
+      let timeout = false
+      const timer = setTimeout(() => { timeout = true; proc.kill() }, 5_000)
+      const [code, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]).finally(() => clearTimeout(timer))
+      if (timeout) return { err: "chafa timed out" }
+      if (code !== 0) return { err: (stderr || `chafa exit ${code}`).trim() }
+      const rows = parseChafa(stdout)
+      cachePut(key, rows)
+      return { rows }
+    } catch (err) {
+      return { err: err instanceof Error ? err.message : String(err) }
+    }
+  })()
+  INFLIGHT.set(key, task)
+  const clear = () => { if (INFLIGHT.get(key) === task) INFLIGHT.delete(key) }
+  void task.then(clear, clear)
+  return task
 }

@@ -19,23 +19,22 @@ const pkgVersion = (d: string, up = 4): string => {
 export const VERSION = pkgVersion(import.meta.dirname)
 
 export type Launch =
-  | { gateway?: string; mode: "new"; splash?: boolean }
-  | { gateway?: string; mode: "resume"; sid?: string; splash?: boolean }
+  | { mode: "new"; profile?: string; splash?: boolean }
+  | { mode: "resume"; profile?: string; sid?: string; splash?: boolean }
 
 /** Parse process argv (everything after the script path). No deps. */
 export function parseLaunch(argv: readonly string[]): Launch {
   let splash = true
   let mode: "new" | "resume" = "new"
+  let profile: string | undefined
   let sid: string | undefined
-  let gateway: string | undefined
-
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--no-splash") { splash = false; continue }
-    if (a === "--gateway-url") {
+    if (a === "--profile") {
       const next = argv[i + 1]
-      if (!next || next.startsWith("-")) throw new Error("--gateway-url requires a URL")
-      gateway = next
+      if (!next || next.startsWith("-")) throw new Error("--profile requires a name")
+      profile = next
       i++
       continue
     }
@@ -43,13 +42,11 @@ export function parseLaunch(argv: readonly string[]): Launch {
     if (a === "--resume") {
       const next = argv[i + 1]
       mode = "resume"
-      // Treat a following non-flag token as the session id.
       if (next && !next.startsWith("-")) { sid = next; i++ }
-      continue
     }
   }
-
-  return mode === "resume" ? { gateway, mode, sid, splash } : { gateway, mode, splash }
+  if (mode === "resume") return { mode, ...(profile ? { profile } : {}), ...(sid ? { sid } : {}), splash }
+  return { mode, ...(profile ? { profile } : {}), splash }
 }
 
 export const HELP = `\
@@ -59,7 +56,7 @@ Usage:
   herm                    start a fresh session
   herm -c, --continue     resume the last real TUI session
   herm --resume [id]      resume last (or the given) session
-  herm --gateway-url URL   connect to remote tui_gateway WebSocket
+  herm --profile <name>   start once with a profile; do not change the default
   herm --no-splash        skip the launch splash
   herm -v, --version      print version
   herm -h, --help         show this help

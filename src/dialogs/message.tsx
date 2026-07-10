@@ -5,12 +5,14 @@
 
 import { DialogSelect } from "../ui/dialog-select"
 import type { DialogContext } from "../ui/dialog"
+import type { ToastContext } from "../ui/toast"
 import type { Message } from "../types/message"
-import { copy } from "../utils/clipboard"
+import { copyText } from "../utils/clipboard"
 
 export type MessageOps = {
   rewind: (m: Message) => void
   fork: (m: Message) => void
+  toast?: ToastContext
 }
 
 export function openMessage(dialog: DialogContext, m: Message, ops: MessageOps) {
@@ -29,7 +31,7 @@ export function openMessage(dialog: DialogContext, m: Message, ops: MessageOps) 
       ]}
       onSelect={(o) => {
         dialog.clear()
-        if (o.value === "copy") return void copy(text)
+        if (o.value === "copy") return void copyText(text, ops.toast)
         if (o.value === "rewind") return ops.rewind(m)
         if (o.value === "fork") return ops.fork(m)
       }}

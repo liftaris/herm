@@ -58,6 +58,8 @@ const spawn = (): Worker => {
     const err = `io worker: ${ev.message}`
     for (const res of state.pending.values()) res({ id: -1, ok: false, err })
     state.pending.clear()
+    if (state.w === w) state.w = null
+    w.terminate()
   }
   return (state.w = w)
 }

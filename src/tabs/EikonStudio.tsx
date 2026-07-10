@@ -16,7 +16,7 @@ import { SliderRenderable } from "@opentui/core"
 import type { ParsedKey, ScrollBoxRenderable } from "@opentui/core"
 import { existsSync } from "node:fs"
 import { basename } from "node:path"
-import type { ReactNode } from "react"
+import type { Dispatch, ReactNode, SetStateAction } from "react"
 import { useTheme } from "../theme"
 import type { Theme } from "../theme/types"
 import { Spinner } from "../ui/spinner"
@@ -41,7 +41,7 @@ import { listEikons } from "../components/avatar/eikon"
 import * as prefs from "../context/preferences"
 import { eikon } from "../service/eikon"
 import type { ParsedEikon } from "../components/avatar/eikon"
-import { W, H, FPS0, caps, thumb, cached, resetCache, prewarm, T0,
+import { W, H, FPS0, caps, thumb, cached, resetCache, prewarm,
          type Rasterizer, type KnobDef, type Spatial, type Tone, type Flip, type Frame } from "../utils/eikon-render"
 import { knobs, STATES, type Session } from "../utils/eikon-knobs"
 import type { AvatarState } from "../components/avatar/states"
@@ -290,6 +290,84 @@ function SpatialBar(props: {
   )
 }
 
+const PreviewPane = memo((props: {
+  s: Session | null
+  frames: Frame[]
+  play: boolean
+  setPlay: Dispatch<SetStateAction<boolean>>
+  focused: boolean
+  busy: boolean
+  live: boolean
+  baked?: ParsedEikon
+  spatialOk: boolean
+  error: string | null
+  pane: Pane
+  sel: number
+  onPane: (pane: Pane) => void
+  onSel: (sel: number) => void
+  onSet: (key: SpKey, value: number) => void
+  onWheel: (key: SpKey, direction: 1 | -1) => void
+  onScroll: (event: MouseEvent) => void
+}) => {
+  const theme = useTheme().theme
+  const [tick, setTick] = useState(0)
+  const n = props.frames.length
+  const fps = props.live
+    ? props.s?.fps ?? FPS0
+    : props.baked?.states.get(props.s?.state ?? "idle")?.fps ?? FPS0
+
+  useEffect(() => setTick(value => value % n), [props.frames, n])
+  useEffect(() => {
+    if (!props.play || !props.focused || n <= 1 || props.busy) return
+    const id = setInterval(() => setTick(value => value + 1), 1000 / Math.max(1, fps))
+    return () => clearInterval(id)
+  }, [props.play, props.focused, n, props.busy, fps])
+
+  const title = props.s
+    ? `Preview — ${props.s.state}${props.s.per[props.s.state] ? " (forked)" : ""}`
+      + (n > 1 ? `  ·  ${props.play ? "▶" : "⏸"} ${(tick % n) + 1}/${n}` : "")
+      + (props.live ? "" : props.baked ? "  ·  (baked)" : "")
+    : "Preview"
+  const frame = props.frames[tick % n] ?? BLANK
+  const body = (
+    <box position="relative" flexDirection="column" width={W} height={H} flexShrink={0}
+         backgroundColor={theme.background} onMouseScroll={props.onScroll}
+         onMouseDown={() => props.setPlay(value => !value)}>
+      {frame.map((line, i) =>
+        <text key={i} fg={props.error ? theme.textMuted : theme.hermAvatar}>{line}</text>)}
+      {props.busy && props.frames[0] === BLANK
+        ? <box position="absolute" left={0} top={H >> 1} width={W} justifyContent="center">
+            <Spinner color={theme.textMuted} label="decoding…" />
+          </box>
+        : null}
+    </box>
+  )
+
+  return (
+    <TabShell title={props.spatialOk ? title : `${title}  ·  (ffmpeg not installed)`}
+              error={props.error} focus={props.pane === "preview"}>
+      {!props.live && props.baked
+        ? <box height={1} overflow="hidden">
+            <text fg={theme.textMuted} wrapMode="none">Baked — download or attach source to edit.</text>
+          </box>
+        : null}
+      {props.spatialOk && props.live && props.s
+        ? <>
+            <PanBars sp={props.s.spatial} sel={props.sel} focused={props.pane === "preview"}
+              onHover={i => { props.onPane("preview"); props.onSel(i) }}
+              onSet={props.onSet} onWheel={props.onWheel}>
+              {body}
+            </PanBars>
+            <SpatialBar sp={props.s.spatial} fps={props.s.fps} dims={props.s.dims}
+              sel={props.sel} focused={props.pane === "preview"}
+              onHover={i => { props.onPane("preview"); props.onSel(i) }}
+              onSet={props.onSet} onWheel={props.onWheel} />
+          </>
+        : body}
+    </TabShell>
+  )
+})
+
 // ── Knob row renderers ───────────────────────────────────────────────
 
 function valueOf(s: Session, r: Rasterizer, row: Row, theme: Theme,
@@ -489,7 +567,6 @@ export const EikonStudio = memo((props: {
   const spRef = useRef(0); spRef.current = spSel
   const sRef = useRef<Session | null>(null); sRef.current = s
   const [frames, setFrames] = useState<Frame[]>([BLANK])
-  const [tick, setTick] = useState(0)
   const [play, setPlay] = useState(true)
   const [busy, setBusy] = useState(false)
   const [fetching, setFetching] = useState(false)
@@ -499,7 +576,6 @@ export const EikonStudio = memo((props: {
   const [saving, setSaving] = useState(false)
   const [pending, setPending] = useState<ReadonlySet<AvatarState>>(new Set())
   const [genOk, setGenOk] = useState<{ image: boolean; video: boolean } | null>(null)
-  const frame = frames[tick % frames.length] ?? BLANK
   const stampRef = useRef("")
   const rev = useSyncExternalStore(eikon.onRevision, eikon.revision)
 
@@ -526,7 +602,7 @@ export const EikonStudio = memo((props: {
     }
     setS(next)
     selRow.current = undefined
-    setSel(0); setPane("knobs"); setErr(null); setTick(0); setFrames([BLANK])
+    setSel(0); setPane("knobs"); setErr(null); setFrames([BLANK])
   }, [])
 
   // Auto-open the active eikon (pref `eikon` by name) on first mount.
@@ -644,7 +720,7 @@ export const EikonStudio = memo((props: {
     if (!src) {
       const clip = baked?.states.get(s.state)
       setFrames(clip?.frames.length ? clip.frames : [BLANK])
-      setErr(null); setBusy(false); setTick(0)
+      setErr(null); setBusy(false)
       return
     }
     const ctrl = new AbortController()
@@ -654,20 +730,10 @@ export const EikonStudio = memo((props: {
       setBusy(false)
       if ("err" in out) { setErr(out.err); return }
       setErr(null); setFrames(out.frames)
-      setTick(t => t % out.frames.length)
     })
     return () => ctrl.abort()
   }, [s?.spatial, s?.tone, s?.base, s?.per, s?.state, s?.fps, s?.rasterizer, src, r, baked])
 
-  // Playback ticker — pure index advance over the already-rendered
-  // `frames`. Zero work per tick; the filmstrip effect above did it
-  // all once. Stops when paused, unfocused, still (1 frame), or busy.
-  useEffect(() => {
-    if (!play || !props.focused || frames.length <= 1 || busy) return
-    const fps = live ? (s?.fps ?? FPS0) : (baked?.states.get(s?.state ?? "idle")?.fps ?? FPS0)
-    const id = setInterval(() => setTick(t => t + 1), 1000 / Math.max(1, fps))
-    return () => clearInterval(id)
-  }, [play, props.focused, frames.length, busy, live, s?.fps, s?.state, baked])
 
   // Thumbnails are second-class: frame-0 only, same spatial, long
   // debounce, stale during scrub, one setThumbs when the batch lands.
@@ -1205,12 +1271,6 @@ export const EikonStudio = memo((props: {
     mutate(p => ({ ...p, spatial: knobs.pan(p.spatial, 0, sign), dirty: true }))
   }
 
-  const n = frames.length
-  const title = s
-    ? `Preview — ${s.state}${s.per[s.state] ? " (forked)" : ""}`
-      + (n > 1 ? `  ·  ${play ? "▶" : "⏸"} ${(tick % n) + 1}/${n}` : "")
-      + (live ? "" : baked ? "  ·  (baked)" : "")
-    : "Preview"
   const previewErr = err ?? (!s || src || baked ? null
     : url ? "no source — Enter on 'download source'"
     :       "no source — Enter on 'source'")
@@ -1228,40 +1288,12 @@ export const EikonStudio = memo((props: {
   const BAR_H = spatialOk && live ? Math.max(Math.ceil(MINI_W / 2), 3) + 1 : 0
   const PREVIEW_W = Math.max(W + 2, 36 + 2 + MINI_W) + 6
   const PREVIEW_H = H + (spatialOk && live ? 1 : 0) + BAR_H + 6 + (previewErr ? 1 : 0)
-  const body = (
-    <box position="relative" flexDirection="column" width={W} height={H} flexShrink={0}
-         backgroundColor={theme.background} onMouseScroll={onScroll}
-         onMouseDown={() => setPlay(p => !p)}>
-      {frame.map((ln, i) =>
-        <text key={i} fg={err ? theme.textMuted : theme.hermAvatar}>{ln}</text>)}
-      {busy && frames[0] === BLANK
-        ? <box position="absolute" left={0} top={H >> 1} width={W} justifyContent="center">
-            <Spinner color={theme.textMuted} label="decoding…" />
-          </box>
-        : null}
-    </box>
-  )
   const preview = (
-    <TabShell title={spatialOk ? title : `${title}  ·  (ffmpeg not installed)`}
-              error={previewErr} focus={pane === "preview"}>
-      {!live && baked
-        ? <box height={1} overflow="hidden">
-            <text fg={theme.textMuted} wrapMode="none">Baked — download or attach source to edit.</text>
-          </box>
-        : null}
-      {spatialOk && live && s
-        ? <>
-            <PanBars sp={s.spatial} sel={spSel} focused={pane === "preview"}
-              onHover={i => { setPane("preview"); setSpSel(i) }}
-              onSet={setBar} onWheel={stepBar}>
-              {body}
-            </PanBars>
-            <SpatialBar sp={s.spatial} fps={s.fps} dims={s.dims} sel={spSel} focused={pane === "preview"}
-              onHover={i => { setPane("preview"); setSpSel(i) }}
-              onSet={setBar} onWheel={stepBar} />
-          </>
-        : body}
-    </TabShell>
+    <PreviewPane s={s} frames={frames} play={play} setPlay={setPlay}
+      focused={Boolean(props.focused)} busy={busy} live={live} baked={baked}
+      spatialOk={spatialOk} error={previewErr} pane={pane} sel={spSel}
+      onPane={setPane} onSel={setSpSel} onSet={setBar} onWheel={stepBar}
+      onScroll={onScroll} />
   )
 
   const help = helpOf(navRows[sel])
@@ -1339,6 +1371,3 @@ export const EikonStudio = memo((props: {
     </box>
   )
 })
-
-// Used by tests and app.tsx to render even when unfocused.
-export default EikonStudio

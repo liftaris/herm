@@ -38,9 +38,40 @@ describe("rules", () => {
     expect(check("logging.level", "TRACE")).toMatch(/one of/)
   })
 
+  test("tool progress accepts only live TUI modes", () => {
+    for (const mode of ["off", "new", "all", "verbose"])
+      expect(check("display.tool_progress", mode), mode).toBeNull()
+    expect(check("display.tool_progress", "log")).toMatch(/one of/)
+  })
+
   test("nonNeg accepts 0", () => {
     expect(check("agent.gateway_timeout", "0")).toBeNull()
     expect(check("agent.gateway_timeout", "-1")).toMatch(/≥/)
+  })
+
+  test("disableable gateway timeout accepts negative integers", () => {
+    expect(check("gateway.platform_connect_timeout", "-1")).toBeNull()
+    expect(check("gateway.platform_connect_timeout", "1.5")).toMatch(/integer/)
+  })
+
+  test("child timeout requires non-negative seconds", () => {
+    expect(check("delegation.child_timeout_seconds", "0")).toBeNull()
+    expect(check("delegation.child_timeout_seconds", "-1")).toMatch(/≥/)
+  })
+
+  test("summary limit requires non-negative integer", () => {
+    expect(check("delegation.max_summary_chars", "0")).toBeNull()
+    expect(check("delegation.max_summary_chars", "24000")).toBeNull()
+    expect(check("delegation.max_summary_chars", "-1")).toMatch(/≥/)
+    expect(check("delegation.max_summary_chars", "1.9")).toMatch(/integer/)
+  })
+
+  test("tool search limits use documented ranges", () => {
+    expect(check("tools.tool_search.max_search_limit", "50")).toBeNull()
+    expect(check("tools.tool_search.max_search_limit", "51")).toMatch(/1–50/)
+    expect(check("tools.tool_search.search_default_limit", "0")).toMatch(/1–50/)
+    expect(check("tools.tool_search.threshold_pct", "100")).toBeNull()
+    expect(check("tools.tool_search.threshold_pct", "101")).toMatch(/0–100/)
   })
 
   test("duration pattern", () => {

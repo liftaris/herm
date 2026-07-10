@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { act, createRef, useState } from "react"
 import { mountNode, until, MockGateway, type Harness } from "./harness"
 import { Composer, type ComposerHandle } from "../src/components/chat/Composer"
+import { acceptCompletion } from "../src/app/useCompletion"
 import * as prefs from "../src/context/preferences"
 import type { SlashCommand } from "../src/app/slashCommands"
 import { LOCAL_COMMANDS } from "../src/app/slashCommands"
@@ -181,7 +182,7 @@ describe("composer", () => {
     t.destroy()
   })
 
-  test("history: multi-line buffer → up/down no-op (returned false)", async () => {
+  test("history: Up from a later logical line lets the textarea own movement", async () => {
     const { t, ref } = await setup()
     await act(async () => { await t.keys.typeText("seed") })
     act(() => t.keys.pressEnter())
@@ -191,6 +192,20 @@ describe("composer", () => {
     await t.settle()
     expect(ref.current?.historyUp()).toBe(false)
     expect(ref.current?.value()).toBe("a\nb")
+    t.destroy()
+  })
+
+  test("history: Up at first logical line loads previous prompt", async () => {
+    const { t, ref } = await setup()
+    await act(async () => { await t.keys.typeText("seed") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+
+    act(() => ref.current?.set("draft"))
+    await t.settle()
+    expect(ref.current?.historyUp()).toBe(true)
+    await t.settle()
+    expect(ref.current?.value()).toBe("seed")
     t.destroy()
   })
 
@@ -208,21 +223,28 @@ describe("composer", () => {
     t.destroy()
   })
 
-  test("popover Enter dispatches onSlash and clears input", async () => {
-    const { t, ref, slashed } = await setup()
-    await act(async () => { await t.keys.typeText("/help") })
+  test("popover Enter completes command text and closes before submit", async () => {
+    const { t, ref, sent, slashed } = await setup()
+    await act(async () => { await t.keys.typeText("/he") })
     await t.settle()
     expect(ref.current?.popOpen()).toBe(true)
 
     act(() => t.keys.pressEnter())
     await t.settle()
-    expect(slashed.map(c => c.name)).toEqual(["help"])
+    expect(slashed).toEqual([])
+    expect(sent).toEqual([])
+    expect(ref.current?.value()).toBe("/help")
+    expect(ref.current?.popOpen()).toBe(false)
+
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    expect(sent).toEqual(["/help"])
     expect(ref.current?.value()).toBe("")
     t.destroy()
   })
 
-  test("slash popover selection accepts the top rendered candidate", async () => {
-    const { t, slashed } = await withCommands([
+  test("slash popover Enter accepts the top rendered candidate", async () => {
+    const { t, ref, slashed } = await withCommands([
       cmd("zulu", "Zed"),
       cmd("alpha", "Client"),
     ])
@@ -235,7 +257,9 @@ describe("composer", () => {
     act(() => t.keys.pressEnter())
     await t.settle()
 
-    expect(slashed.map(c => c.name)).toEqual([top!])
+    expect(ref.current?.value()).toBe(`/${top!}`)
+    expect(ref.current?.popOpen()).toBe(false)
+    expect(slashed).toEqual([])
     t.destroy()
   })
 
@@ -254,6 +278,76 @@ describe("composer", () => {
     expect(cats.length).toBe(1)
     expect(items.length).toBeLessThanOrEqual(10)
     expect(t.frame()).toContain("/skill-31")
+    t.destroy()
+  })
+
+  test("slash token in mixed prose opens popover and accept replaces only token", async () => {
+    const { t, ref, slashed } = await setup()
+    await act(async () => { await t.keys.typeText("please /cl") })
+    await until(t, () => t.frame().includes("/clear"))
+    expect(ref.current?.popOpen()).toBe(true)
+
+    act(() => ref.current?.popAccept())
+    await t.settle()
+    expect(ref.current?.value()).toBe("please /clear")
+    expect(ref.current?.popOpen()).toBe(false)
+    expect(slashed).toEqual([])
+    t.destroy()
+  })
+
+  test("slash tokens in paths, URLs, and markdown links do not open popover", async () => {
+    for (const text of ["/tmp/file", "https://host/path", "see [label](/clear)"]) {
+      const { t, ref } = await setup()
+      await act(async () => { await t.keys.typeText(text) })
+      await t.settle()
+      expect(ref.current?.popOpen()).toBe(false)
+      t.destroy()
+    }
+  })
+
+  test("mixed prose slash command submits as prompt text, not local slash", async () => {
+    const { t, sent, slashed } = await setup()
+    await act(async () => { await t.keys.typeText("please /clear now") })
+    await until(t, () => t.frame().includes("/clear"))
+    act(() => t.keys.pressEscape())
+    await t.settle()
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    expect(sent).toEqual(["please /clear now"])
+    expect(slashed).toEqual([])
+    t.destroy()
+  })
+
+  test("slash RPC completion in mixed prose preserves suffix", async () => {
+    const gw = new MockGateway({
+      "complete.slash": p => p.text === "/zz" ? {
+        replace_from: 1,
+        items: [{ text: "zeta", display: "/zeta", meta: "remote" }],
+      } : { items: [] },
+    })
+    const { t, ref } = await setup(gw)
+
+    await act(async () => { await t.keys.typeText("please /zz") })
+    await until(t, () => t.frame().includes("/zeta"))
+    expect(t.gw.last("complete.slash")?.params.text).toBe("/zz")
+
+    act(() => t.keys.pressEnter())
+    await t.settle()
+    expect(ref.current?.value()).toBe("please /zeta ")
+    t.destroy()
+  })
+
+  test("popover arrows own navigation before composer history", async () => {
+    const { t, ref } = await setup()
+    await act(async () => { await t.keys.typeText("seed") })
+    act(() => t.keys.pressEnter())
+    await t.settle()
+
+    await act(async () => { await t.keys.typeText("please /") })
+    await until(t, () => t.frame().includes("/clear"))
+    act(() => ref.current?.popNav(1))
+    await t.settle()
+    expect(ref.current?.value()).toBe("please /")
     t.destroy()
   })
 
@@ -338,6 +432,15 @@ describe("composer", () => {
     expect(sent).toEqual([])
     expect(ref.current?.value()).toBe("see ./bad")
     t.destroy()
+  })
+
+  test("acceptCompletion preserves suffix for mid-buffer replacement", () => {
+    expect(acceptCompletion(
+      "please /zz now",
+      { text: "zeta", display: "/zeta", meta: "remote" },
+      8,
+      10,
+    )).toBe("please /zeta now")
   })
 
   test("@ opens atref popover; Tab inserts; Esc dismisses without clearing", async () => {
@@ -441,16 +544,17 @@ describe("composer", () => {
     t.destroy()
   })
 
-  test("slash popover live while streaming; Enter fires onSlash, not onEnqueue", async () => {
+  test("slash popover live while streaming; Enter accepts without enqueueing", async () => {
     const ref = createRef<ComposerHandle>()
     const slashed: SlashCommand[] = []
     const queued: string[] = []
+    const sent: string[] = []
     const t: Harness = await mountNode(
       <box flexDirection="column" flexGrow={1} width="100%" height="100%">
         <box flexGrow={1} />
         <Composer
           ref={ref} focused canSubmitPrompt={true} ready streaming queue={[]} cmds={LOCAL_COMMANDS}
-          onSend={() => {}} onSlash={c => slashed.push(c)}
+          onSend={m => sent.push(m)} onSlash={c => slashed.push(c)}
           onEnqueue={m => queued.push(m)}
         />
       </box>,
@@ -458,7 +562,7 @@ describe("composer", () => {
     )
     await until(t, () => t.frame().includes("Type to queue"))
 
-    await act(async () => { await t.keys.typeText("/steer") })
+    await act(async () => { await t.keys.typeText("/ste") })
     await t.settle()
     expect(ref.current?.popOpen()).toBe(true)
     // Popover renders its matched entry above the input.
@@ -466,9 +570,11 @@ describe("composer", () => {
 
     act(() => t.keys.pressEnter())
     await t.settle()
-    expect(slashed.map(c => c.name)).toEqual(["steer"])
+    expect(slashed).toEqual([])
+    expect(sent).toEqual([])
     expect(queued).toEqual([])
-    expect(ref.current?.value()).toBe("")
+    expect(ref.current?.value()).toBe("/steer")
+    expect(ref.current?.popOpen()).toBe(false)
     t.destroy()
   })
 
@@ -565,7 +671,7 @@ describe("composer: paste → file drop detection", () => {
     t.destroy()
   })
 
-  test("non-image file → wrapped text inserted, no chip", async () => {
+  test("non-image file → wrapped text inserted and chip mirrored", async () => {
     const { t, ref, attached } = await dropSetup(() => ({
       matched: true, is_image: false, path: "/tmp/report.pdf", name: "report.pdf",
       text: "[User attached file: /tmp/report.pdf]",
@@ -573,7 +679,7 @@ describe("composer: paste → file drop detection", () => {
     await act(async () => { await t.keys.pasteBracketedText("/tmp/report.pdf") })
     await until(t, () => (ref.current?.value() ?? "").length > 0)
     expect(ref.current?.value()).toBe("[User attached file: /tmp/report.pdf] ")
-    expect(attached).toEqual([])
+    expect(attached).toEqual([{ attached: true, path: "/tmp/report.pdf", name: "report.pdf" }])
     t.destroy()
   })
 

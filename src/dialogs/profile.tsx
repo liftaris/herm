@@ -136,7 +136,7 @@ const UpdateForm = (props: { p: ProfileInfo; done: (force: boolean | null) => vo
   )
 }
 
-export function openUpdateDistribution(
+function openUpdateDistribution(
   dialog: DialogContext,
   p: ProfileInfo,
   onConfirm: (force: boolean) => void,

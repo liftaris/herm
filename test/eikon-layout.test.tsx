@@ -7,7 +7,6 @@ import { EikonGroup } from "../src/tabs/EikonGroup"
 import { eikon } from "../src/service/eikon"
 import { caps, type Rasterizer } from "../src/utils/eikon-render"
 
-const HH = process.env.HERMES_HOME!
 // 1×1 gray PNG — valid for the shared ffmpeg decode step.
 const PX = new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,0,0,0,0,58,126,155,85,0,0,0,10,73,68,65,84,120,156,99,104,0,0,0,130,0,129,119,205,114,182,0,0,0,0,73,69,78,68,174,66,96,130])
 const run = caps.ffmpeg ? test : test.skip

@@ -14,12 +14,18 @@ type RpcAlias = {
 
 const onOff = (v: unknown) => (v ? "on" : "off")
 
+export const TOOL_PROGRESS = ["off", "new", "all", "verbose"] as const
+const progress = new Set<string>(TOOL_PROGRESS)
+const progressErr = "log is a gateway-only config-file mode, not a live TUI mode"
+
 export const RPC_ALIAS: Record<string, RpcAlias> = {
   model: { alias: "model" },
   provider: { alias: "model" },
   "agent.service_tier": { alias: "fast" },
   "agent.reasoning_effort": { alias: "reasoning" },
   "display.show_reasoning": { alias: "reasoning", toWire: v => (v ? "show" : "hide") },
+  // Upstream messaging gateways support `display.tool_progress=log`, but
+  // stock TUI `config.set verbose` only live-applies these four modes.
   "display.tool_progress": { alias: "verbose" },
   "display.busy_input_mode": { alias: "busy" },
   "display.details_mode": { alias: "details_mode" },
@@ -80,10 +86,13 @@ export const writeConfig = async (gw: Gw, diffs: Diff[]): Promise<WriteResult> =
   const ok: string[] = []
   const failed: WriteResult["failed"] = []
   const warnings: WriteResult["warnings"] = []
+  const blocked = diffs.filter(d => d.key === "display.tool_progress" && !progress.has(String(d.to ?? "")))
+  for (const d of blocked) failed.push({ key: d.key, err: progressErr })
+  const safe = diffs.filter(d => !blocked.includes(d))
 
-  const rpc = diffs.filter(d => route(d.key).via === "rpc")
-  const cli = diffs.filter(d => route(d.key).via === "cli")
-  const ro = diffs.filter(d => route(d.key).via === "readonly")
+  const rpc = safe.filter(d => route(d.key).via === "rpc")
+  const cli = safe.filter(d => route(d.key).via === "cli")
+  const ro = safe.filter(d => route(d.key).via === "readonly")
   for (const d of ro) failed.push({ key: d.key, err: "structured value — edit in YAML mode" })
 
   for (const d of rpc) {

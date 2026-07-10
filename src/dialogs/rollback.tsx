@@ -7,7 +7,7 @@
 // already-loaded data (our key handler registers after the provider's,
 // so our replace wins the batched setState race).
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { useKeys, handleListKey } from "../keys"
 import { useTheme } from "../theme"
@@ -20,7 +20,7 @@ import { ago, trunc } from "../ui/fmt"
 type Toast = ReturnType<typeof useToast>
 
 type Checkpoint = { hash: string; timestamp: number; message: string }
-type ListRes = { enabled: boolean; checkpoints: Checkpoint[] }
+type ListRes = { enabled: boolean; checkpoints: Checkpoint[]; err?: string }
 type DiffRes = { stat: string; diff: string; rendered?: string }
 type RestoreRes = { success: boolean; history_removed?: number }
 
@@ -38,26 +38,38 @@ const RollbackDialog = (props: Props) => {
   const [data, setData] = useState<ListRes | null>(props.initial ?? null)
   const [sel, setSel] = useState(props.sel ?? 0)
   const [diff, setDiff] = useState<DiffRes | null>(null)
+  const [opened, setOpened] = useState<Checkpoint | null>(null)
   const [confirm, setConfirm] = useState(false)
+  const seq = useRef(0)
+  const restoring = useRef(false)
 
   useEffect(() => {
     if (props.initial) return
     props.gw.request<ListRes>("rollback.list")
       .then(setData)
-      .catch((e: Error) => setData({ enabled: false, checkpoints: [], ...{ err: e.message } } as ListRes))
+      .catch((e: Error) => setData({ enabled: false, checkpoints: [], err: e.message }))
   }, [props.gw, props.initial])
+  useEffect(() => () => { seq.current++ }, [])
 
   const points = data?.checkpoints ?? []
   const cur = points[sel]
+  const target = opened ?? cur
 
   const open = (cp: Checkpoint) => {
+    const id = ++seq.current
     props.gw.request<DiffRes>("rollback.diff", { hash: cp.hash })
-      .then(setDiff)
-      .catch((e: Error) => props.toast.error(e))
+      .then(next => {
+        if (seq.current !== id) return
+        setOpened(cp)
+        setDiff(next)
+      })
+      .catch((e: Error) => { if (seq.current === id) props.toast.error(e) })
   }
 
   const back = () => {
+    seq.current++
     setDiff(null)
+    setOpened(null)
     setConfirm(false)
     // Provider already dispatched clear() on this Esc — replace() wins
     // the batch. React reconciles same-type at same slot and keeps our
@@ -69,6 +81,8 @@ const RollbackDialog = (props: Props) => {
   }
 
   const restore = (cp: Checkpoint) => {
+    if (restoring.current) return
+    restoring.current = true
     props.gw.request<RestoreRes>("rollback.restore", { hash: cp.hash })
       .then(r => {
         if (!r.success) throw new Error("restore rejected")
@@ -81,13 +95,14 @@ const RollbackDialog = (props: Props) => {
         props.toast.show({ variant: "error", message: `Restore failed: ${e.message}` })
         props.dialog.clear()
       })
+      .finally(() => { restoring.current = false })
   }
 
   const keys = useKeys()
   useKeyboard((key) => {
     if (diff) {
       if (confirm) {
-        if (keys.match("dialog.confirm", key)) return restore(cur)
+        if (target && keys.match("dialog.confirm", key)) return restore(target)
         if (keys.match("dialog.deny", key) || keys.match("dialog.cancel", key)) {
           setConfirm(false); return back()
         }
@@ -112,9 +127,9 @@ const RollbackDialog = (props: Props) => {
 
   if (!data.enabled) return (
     <box flexDirection="column" width={60} height={5}>
-      <box height={1}><text fg={theme.warning}><strong>Checkpoints disabled</strong></text></box>
+      <box height={1}><text fg={theme.warning}><strong>{data.err ? "Rollback unavailable" : "Checkpoints disabled"}</strong></text></box>
       <box height={1} />
-      <box height={1}><text fg={theme.textMuted}>Enable checkpoints in config to use /rollback.</text></box>
+      <box height={1}><text fg={theme.textMuted}>{data.err ?? "Enable checkpoints in config to use /rollback."}</text></box>
       <box height={1} />
       <box height={1}><text fg={theme.textMuted}>Esc to close</text></box>
     </box>
@@ -126,8 +141,8 @@ const RollbackDialog = (props: Props) => {
       <box flexDirection="column" width={110} height={30}>
         <box height={1}><text>
           <span fg={theme.primary}><strong>Rollback · </strong></span>
-          <span fg={theme.accent}>{cur.hash.slice(0, 7)}</span>
-          <span fg={theme.textMuted}>{`  ${trunc(cur.message, 70)}`}</span>
+          <span fg={theme.accent}>{target?.hash.slice(0, 7) ?? ""}</span>
+          <span fg={theme.textMuted}>{`  ${trunc(target?.message ?? "", 70)}`}</span>
         </text></box>
         <box height={1}><text fg={theme.textMuted}>{diff.stat || " "}</text></box>
         <box height={1} />

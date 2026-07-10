@@ -1,4 +1,5 @@
 import { platform } from "os"
+import type { ToastContext } from "../ui/toast"
 
 // Terminals known to correctly implement OSC 52 clipboard writes. On these,
 // firing a native tool (wl-copy/xclip/pbcopy) alongside OSC 52 races the
@@ -115,12 +116,22 @@ export async function copy(text: string): Promise<void> {
   }
 }
 
-export function copySelection(renderer: { getSelection: () => { getSelectedText: () => string } | null; clearSelection: () => void }): boolean {
+function copied(toast: ToastContext, message = "Copied to clipboard"): void {
+  toast.show({ key: "clipboard.copy", variant: "success", message })
+}
+
+export function copyText(text: string, toast?: ToastContext, message = "Copied to clipboard"): Promise<void> {
+  const p = copy(text)
+  if (toast) copied(toast, message)
+  return p
+}
+
+export function copySelection(renderer: { getSelection: () => { getSelectedText: () => string } | null; clearSelection: () => void }, toast?: ToastContext): boolean {
   const sel = renderer.getSelection()
   const text = sel?.getSelectedText()
   if (!text) return false
 
-  copy(text).catch(() => {})
+  copyText(text, toast).catch(() => {})
   renderer.clearSelection()
   return true
 }

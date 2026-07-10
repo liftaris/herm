@@ -4,7 +4,7 @@
 // `usePlugins()` exposes the bound `<Slot>`, registered routes, and
 // activate/deactivate controls to the shell.
 
-import { createContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react"
+import { Component, createContext, useEffect, useMemo, useReducer, useRef, type ErrorInfo, type ReactNode } from "react"
 import { createReactSlotRegistry, createSlot, useRenderer, type ReactSlotComponent } from "@opentui/react"
 import { makeUse } from "../context/helper"
 import { useTheme, type Theme } from "../theme"
@@ -17,7 +17,7 @@ import * as prefs from "../context/preferences"
 import { createApi, type ApiInput } from "./api"
 import { createScope, type Scope } from "./scope"
 import { INTERNAL } from "./internal"
-import type { HermPlugin, HermPluginApi, PluginStatus, RouteDef, SlotCtx, SlotPlugin, Slots } from "./types"
+import type { HermPlugin, HermPluginApi, PluginStatus, RouteContext, RouteDef, SlotCtx, SlotPlugin, Slots } from "./types"
 
 const KV_ENABLED = "enabled"
 
@@ -47,6 +47,27 @@ function fail(msg: string, err?: unknown) {
   console.error(msg + tail)
 }
 
+const RouteBody = (props: { render: RouteDef["render"]; ctx: RouteContext }) => props.render(props.ctx)
+
+class RouteBoundary extends Component<
+  { id: string; name: string; children: ReactNode },
+  { error?: Error }
+> {
+  state: { error?: Error } = {}
+
+  static getDerivedStateFromError(error: Error) { return { error } }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    fail(`[plugin:${this.props.id}] render error in route "${this.props.name}"`, error)
+  }
+
+  render() {
+    if (this.state.error)
+      return <text>{`Plugin ${this.props.id} route ${this.props.name}: ${this.state.error.message}`}</text>
+    return this.props.children
+  }
+}
+
 function enabledMap(): Record<string, boolean> {
   const bag = prefs.get("plugin") as Record<string, unknown> | undefined
   const v = bag?.[KV_ENABLED]
@@ -74,7 +95,14 @@ function scoped(base: HermPluginApi, reg: ReturnType<typeof createReactSlotRegis
       },
     },
     route: {
-      register: defs => scope.track(base.route.register(defs)),
+      register: defs => scope.track(base.route.register(defs.map(def => ({
+        ...def,
+        render: ctx => (
+          <RouteBoundary id={id} name={def.name}>
+            <RouteBody render={def.render} ctx={ctx} />
+          </RouteBoundary>
+        ),
+      })))),
       navigate: base.route.navigate,
       get current() { return base.route.current },
     },

@@ -100,6 +100,23 @@ describe("session.close", () => {
     t.destroy()
   })
 
+  test("switchSession preserves prev when background ownership is unknown", async () => {
+    const gw = new MockGateway({
+      "commands.catalog": () => ({ pairs: [["/resume", "resume session"]] }),
+      "agents.list": () => { throw new Error("agents unavailable") },
+      "session.resume": p => ({ session_id: p.session_id, messages: [] }),
+    })
+    const t = await mount({ gw, launch: { mode: "resume", sid: "first", splash: false } })
+    await until(t, () => t.frame().includes("Ready"))
+
+    await act(async () => { await t.keys.typeText("/resume second") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => gw.last("agents.list") !== undefined)
+    expect(gw.calls.some(call => call.method === "session.resume" && call.params.session_id === "second")).toBe(true)
+    expect(gw.last("session.close")).toBeUndefined()
+    t.destroy()
+  })
+
   test("/new preserves prev while a background process runs", async () => {
     let n = 0
     const gw = new MockGateway({

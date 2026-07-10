@@ -107,6 +107,13 @@ export function stickyDefault(): string | null {
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
+export function resolveProfileHome(name: string): string | null {
+  if (name === "default") return root()
+  if (!ID_RE.test(name)) return null
+  const dir = join(root(), "profiles", name)
+  return existsSync(dir) ? dir : null
+}
+
 function readModel(dir: string): [string | null, string | null] {
   try {
     const raw = readFileSync(join(dir, "config.yaml"), "utf-8")

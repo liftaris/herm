@@ -51,7 +51,6 @@ describe.skipIf(!have())("chafa → OpenTUI integration", () => {
 
     const t = await mountNode(<ChafaBlock rows={rows} />, { width: 30, height: 12 })
     const frame = t.frame()
-    const lines = frame.split("\n").filter(l => l.trim().length > 0)
 
     // Frame should NOT contain raw SGR escape bytes — if it does, OpenTUI
     // is printing our spans' style bytes literally (which would be a regression).

@@ -35,11 +35,13 @@ export type SlotCtx = { readonly theme: Theme }
 
 export type SlotPlugin = ReactPlugin<Slots, SlotCtx>
 
+export type RouteContext = { focused: boolean }
+
 export type RouteDef = {
   /** Stable name — also the `/name` slash target and TabBar label. */
   name: string
   description?: string
-  render: () => ReactNode
+  render: (ctx: RouteContext) => ReactNode
 }
 
 export type Dispose = () => void | Promise<void>

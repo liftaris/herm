@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, type ReactNode } from "react"
-import type { RGBA } from "@opentui/core"
+import { TextAttributes, type RGBA } from "@opentui/core"
 import { useTheme } from "../theme"
 import { prefs } from "../context/preferences"
 
@@ -66,7 +66,7 @@ export const Hdr = (p: { children: ReactNode }) => (
 // non-truncated cells and unselected rows don't tick.
 export const Marquee = (p: {
   w?: number; grow?: boolean; min?: number
-  fg?: RGBA; bold?: boolean
+  fg?: RGBA; bold?: boolean; underline?: boolean
   active: boolean
   /** ms per character step (default 180). */
   speed?: number
@@ -122,8 +122,8 @@ export const Marquee = (p: {
          width={p.w} flexGrow={p.grow ? 1 : 0} flexShrink={p.grow ? 1 : 0}
          minWidth={p.grow ? (p.min ?? 12) : p.w} height={1} overflow="hidden">
       <text ref={node} wrapMode="none">{p.bold
-        ? <span fg={fg}><strong>{body}</strong></span>
-        : <span fg={fg}>{body}</span>}</text>
+        ? <span fg={fg} attributes={p.underline ? TextAttributes.UNDERLINE : TextAttributes.NONE}><strong>{body}</strong></span>
+        : <span fg={fg} attributes={p.underline ? TextAttributes.UNDERLINE : TextAttributes.NONE}>{body}</span>}</text>
     </box>
   )
 }

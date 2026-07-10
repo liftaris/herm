@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { DEFAULTS, inScope, scopesOverlap, type ActionId, type Scope } from "../src/keys/catalog"
-import { parse, print, type Chord } from "../src/keys/chord"
+import { parse, print } from "../src/keys/chord"
 import { conflicts, conflictsWith } from "../src/keys/conflicts"
 
 const ids = Object.keys(DEFAULTS) as ActionId[]

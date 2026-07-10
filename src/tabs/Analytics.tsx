@@ -1,15 +1,16 @@
-import { useState, useEffect, useRef, useMemo, memo } from "react"
+import { useState, useMemo, memo } from "react"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import type { RGBA } from "@opentui/core"
 import { cache, type Analytics as Data, type NameRow } from "../service/hermes-analytics"
-import { io } from "../io"
 import { useKeys } from "../keys"
 import { useTheme } from "../theme"
+import { useDialog } from "../ui/dialog"
 import { Spinner } from "../ui/spinner"
 import { TabShell } from "../ui/shell"
 import { HintBar } from "../ui/hint"
 import { Col, Hdr } from "../ui/table"
 import { fmt, cost, trunc } from "../ui/fmt"
+import { useAnalyticsData, type AnalyticsQuery } from "./analytics-data"
 
 const BLOCKS = " ▁▂▃▄▅▆▇█"
 
@@ -88,45 +89,17 @@ const Rank = memo((p: { title: string; rows: NameRow[] | null; fg: RGBA; n?: num
   )
 })
 
-export const Analytics = memo((props: { focused?: boolean }) => {
+export const Analytics = memo((props: { focused?: boolean; load?: AnalyticsQuery }) => {
   const theme = useTheme().theme
+  const dialog = useDialog()
   const dims = useTerminalDimensions()
   const [days, setDays] = useState(7)
-  // io.analytics runs bun:sqlite in a worker; the main thread never
-  // blocks. Worker-message delivery is a macrotask, which in opentui's
-  // request-driven mode lands *after* requestRender's nextTick→
-  // activateFrame — so `setData(fast); await io.x()` commits the fast
-  // frame before the heavy query returns. Staging:
-  //   frame 1 — cached snapshot if any, else spinner
-  //   frame 2 — sessions-only (totals/chart/models/sources, <20 ms)
-  //   frame 3 — tools filled in
-  const [data, setData] = useState<Data | null>(() => cache.get(days) ?? null)
-  const [tools, setTools] = useState<NameRow[] | null>(
-    () => cache.get(days)?.byTool ?? null)
   const [tick, setTick] = useState(0)
-  const gen = useRef(0)
-
-  useEffect(() => {
-    const hit = cache.get(days)
-    setData(hit ?? null)
-    setTools(hit?.byTool ?? null)
-    const g = ++gen.current
-    void io.analytics(days, { tools: false }).then(fast => {
-      if (gen.current !== g) return
-      setData(fast)
-      void io.analytics(days).then(full => {
-        if (gen.current !== g) return
-        cache.set(days, full)
-        setData(full)
-        setTools(full.byTool)
-      })
-    })
-    return () => { gen.current++ }
-  }, [days, tick])
+  const { data, tools, error } = useAnalyticsData(days, tick, props.load)
 
   const keys = useKeys()
   useKeyboard((key) => {
-    if (!props.focused) return
+    if (!props.focused || dialog.open()) return
     if (keys.match("list.refresh", key)) { cache.delete(days); return setTick(n => n + 1) }
     if (key.raw === "1") return setDays(1)
     if (key.raw === "7") return setDays(7)
@@ -147,7 +120,9 @@ export const Analytics = memo((props: { focused?: boolean }) => {
   if (!data) return (
     <box flexDirection="column" flexGrow={1} minWidth={0}>
       <TabShell title={title}>
-        <box height={1}><Spinner label={`aggregating ${days}d…`} /></box>
+        <box height={1}>{error
+          ? <text fg={theme.error}>{error}</text>
+          : <Spinner label={`aggregating ${days}d…`} />}</box>
       </TabShell>
       <HintBar pairs={[
         ["1/7/3/9", "period"],
@@ -168,6 +143,7 @@ export const Analytics = memo((props: { focused?: boolean }) => {
     <box flexDirection="column" flexGrow={1} minWidth={0}>
     <TabShell title={title}>
       <box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
+        {error ? <box height={1}><text fg={theme.error}>{error}</text></box> : null}
         {/* Summary + chart — fixed block */}
         <box flexShrink={0} flexDirection="column">
           <box height={1}><text fg={theme.textMuted}>
