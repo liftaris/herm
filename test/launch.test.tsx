@@ -19,10 +19,18 @@ describe("parseLaunch", () => {
     [["--foo", "-c"], { mode: "resume", splash: true }],
     [["--no-splash"], { mode: "new", splash: false }],
     [["--no-splash", "-c"], { mode: "resume", splash: false }],
+    [["-c", "--no-splash"], { mode: "resume", splash: false }],
+    [["--profile", "coder"], { mode: "new", profile: "coder", splash: true }],
+    [["--resume", "abc123", "--profile", "coder"], { mode: "resume", profile: "coder", sid: "abc123", splash: true }],
   ]
   for (const [argv, want] of cases) {
     test(JSON.stringify(argv), () => expect(parseLaunch(argv)).toEqual(want))
   }
+
+  test("requires a profile name", () => {
+    expect(() => parseLaunch(["--profile"])).toThrow("--profile requires a name")
+    expect(() => parseLaunch(["--profile", "--resume"])).toThrow("--profile requires a name")
+  })
 })
 
 describe("normalize", () => {

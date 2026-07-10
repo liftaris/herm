@@ -20,6 +20,8 @@ import { resetTerminalModes, installExitResetHooks } from "./utils/terminal-rese
 import { clampStdoutDimensions } from "./utils/terminal-size";
 import { warmup as warmTokens } from "./utils/tokens";
 import { prime as primeTheme, DEFAULT_THEME } from "./theme";
+import { resolveProfileHome } from "./service/hermes-profiles";
+import { rehome } from "./home/rehome";
 
 // Static ESM imports hoist above module-level code, so the only
 // honest import-graph measurement is process-uptime at the point
@@ -39,6 +41,11 @@ if (argv.includes("--version") || argv.includes("-v")) {
   process.exit(0)
 }
 const launch = parseLaunch(argv)
+if (launch.profile) {
+  const home = resolveProfileHome(launch.profile)
+  if (!home) throw new Error(`profile not found: ${launch.profile}`)
+  rehome(home)
+}
 
 // Initialize and render
 const main = async () => {

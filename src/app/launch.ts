@@ -19,25 +19,34 @@ const pkgVersion = (d: string, up = 4): string => {
 export const VERSION = pkgVersion(import.meta.dirname)
 
 export type Launch =
-  | { mode: "new"; splash?: boolean }
-  | { mode: "resume"; sid?: string; splash?: boolean }
+  | { mode: "new"; profile?: string; splash?: boolean }
+  | { mode: "resume"; profile?: string; sid?: string; splash?: boolean }
 
 /** Parse process argv (everything after the script path). No deps. */
 export function parseLaunch(argv: readonly string[]): Launch {
   let splash = true
+  let mode: "new" | "resume" = "new"
+  let profile: string | undefined
+  let sid: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--no-splash") { splash = false; continue }
-    if (a === "-c" || a === "--continue") return { mode: "resume", splash }
+    if (a === "--profile") {
+      const next = argv[i + 1]
+      if (!next || next.startsWith("-")) throw new Error("--profile requires a name")
+      profile = next
+      i++
+      continue
+    }
+    if (a === "-c" || a === "--continue") { mode = "resume"; continue }
     if (a === "--resume") {
       const next = argv[i + 1]
-      // Treat a following non-flag token as the session id.
-      return next && !next.startsWith("-")
-        ? { mode: "resume", sid: next, splash }
-        : { mode: "resume", splash }
+      mode = "resume"
+      if (next && !next.startsWith("-")) { sid = next; i++ }
     }
   }
-  return { mode: "new", splash }
+  if (mode === "resume") return { mode, ...(profile ? { profile } : {}), ...(sid ? { sid } : {}), splash }
+  return { mode, ...(profile ? { profile } : {}), splash }
 }
 
 export const HELP = `\
@@ -47,6 +56,7 @@ Usage:
   herm                    start a fresh session
   herm -c, --continue     resume the last real TUI session
   herm --resume [id]      resume last (or the given) session
+  herm --profile <name>   start once with a profile; do not change the default
   herm --no-splash        skip the launch splash
   herm -v, --version      print version
   herm -h, --help         show this help

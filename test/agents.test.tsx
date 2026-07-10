@@ -7,7 +7,7 @@ import { mountNode, until, MockGateway } from "./harness"
 import { Agents } from "../src/tabs/Agents"
 import {
   listProfiles, validateName, activeProfileName, profileNameFrom, stickyDefault, profileStats,
-  readDistributionManifest,
+  readDistributionManifest, resolveProfileHome,
 } from "../src/service/hermes-profiles"
 import type { DelegationRecord, DelegationStatus } from "../src/context/wire"
 
@@ -96,6 +96,13 @@ describe("hermes-profiles", () => {
     expect(validateName("Bad", [])).toMatch(/must match/)
     expect(validateName("coder", ["coder"])).toBe("already exists")
     expect(validateName("default", [])).toBe("reserved name")
+  })
+
+  test("resolveProfileHome validates one-off launch profiles", () => {
+    expect(resolveProfileHome("default")).toBe(ROOT)
+    expect(resolveProfileHome("coder")).toBe(join(ROOT, "profiles", "coder"))
+    expect(resolveProfileHome("missing")).toBeNull()
+    expect(resolveProfileHome("Bad")).toBeNull()
   })
 
   test("profileStats reads state.db + cron/jobs.json + herm/tui.json; nulls when absent", async () => {
