@@ -41,6 +41,7 @@ import { turnReducer, initialTurn } from "./app/turnReducer"
 import { useSession } from "./app/useSession"
 import { SkinProvider, deriveSkin, type SkinState } from "./context/skin"
 import { useAppKeys } from "./app/useAppKeys"
+import { useTerminalTitle } from "./app/useTerminalTitle"
 import { quit } from "./app/exit"
 import { Stash } from "./app/stash"
 import { TABS, CHAT_TAB, SESSIONS_TAB, AUTOMATION_TAB, CONFIG_TAB, EIKON_TAB, SUB_TABS } from "./app/tabs"
@@ -254,6 +255,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setTimeout(() => sendRef.current(text), 0)
     })
   }, [])
+
+  useTerminalTitle(active, info?.cwd)
 
   // Transient error pulse — set on any reducer {kind:"error"} or
   // gateway exit; cleared when the avatar's play-once error clip

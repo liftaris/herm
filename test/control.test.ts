@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { internals, isDangerous, isLoopback, setBridge, warningFor } from "../src/app/control"
 import { TABS } from "../src/app/tabs"
 
@@ -188,4 +188,28 @@ test("POST /send returns the bridge failure", async () => {
   }))
   expect(response.status).toBe(502)
   expect(await response.json()).toEqual({ error: "submit unavailable" })
+})
+
+test("GET /quit clears the terminal title before scheduling exit", async () => {
+  const calls: string[] = []
+  setBridge({
+    tab: () => 0, setTab: () => {}, send: async () => {},
+    ready: () => true, streaming: () => false, messages: () => 0,
+    session: () => "sid", input: () => "", setInput: () => {},
+    focusRegion: () => "input", setFocusRegion: () => {},
+    renderer: () => ({ setTerminalTitle: (title: string) => calls.push(`title:${title}`) }),
+    logs: () => "", plugin: async () => true, push: () => {},
+  })
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((_fn: TimerHandler, ms?: number) => {
+    calls.push(`timer:${ms}`)
+    return 0 as unknown as ReturnType<typeof setTimeout>
+  }) as unknown as typeof setTimeout)
+
+  try {
+    const response = await internals.handle(new Request("http://localhost/quit"))
+    expect(response.status).toBe(200)
+    expect(calls).toEqual(["title:", "timer:10"])
+  } finally {
+    timer.mockRestore()
+  }
 })

@@ -455,6 +455,8 @@ async function handle(req: Request): Promise<Response> {
   // GET /quit — clean exit so a recording PTY sees EOF. Macrotask so the
   // 200 flushes before the process dies.
   if (path === "/quit") {
+    const renderer = bridge.renderer() as { setTerminalTitle?: (title: string) => void } | null
+    try { renderer?.setTerminalTitle?.("") } catch {}
     setTimeout(() => process.exit(0), 10)
     return json({ ok: true })
   }

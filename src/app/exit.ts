@@ -8,15 +8,14 @@
 // mode-reset blob synchronously on process.exit().
 //
 // Parity: opencode context/exit.tsx — minus onBeforeExit/onExit (no
-// plugin runtime), setTerminalTitle (herm never sets it), and the
-// win32 input-buffer flush (tracked as a bead).
+// plugin runtime) and the win32 input-buffer flush (tracked as a bead).
 
 import { writeSync } from "node:fs"
 
 let done = false
 
 export function quit(
-  renderer: { destroy: () => void },
+  renderer: { destroy: () => void; setTerminalTitle: (t: string) => void },
   sid?: string,
   title?: string,
   gw?: { kill: () => void },
@@ -29,6 +28,7 @@ export function quit(
   // the explicit signal starts cleanup sooner and matches Ink TUI's
   // setupGracefulExit cleanup.
   try { gw?.kill() } catch {}
+  try { renderer.setTerminalTitle("") } catch {}
   renderer.destroy()
   if (process.stdout.isTTY) {
     const banner = sid
