@@ -22,8 +22,10 @@ import { setHome as setHermesHome } from "../service/hermes-home"
 import { setHome as setDbHome } from "../service/sessions-db"
 import { cache as analyticsCache } from "../service/hermes-analytics"
 import { resetKanban } from "../service/hermes-kanban"
+import { close as closeIo } from "../io"
 import { close as closeKanbanWorker } from "../io/kanban"
 import { prefs } from "../context/preferences"
+import { clear as clearSpawnHistory } from "../app/spawnHistory"
 import { home } from "./store"
 
 /** Rebind all HERMES_HOME readers to `newHome` and refresh reactive
@@ -33,6 +35,8 @@ export function rehome(newHome: string): void {
   setHermesHome(newHome)
   setDbHome(newHome)
   analyticsCache.clear()
+  closeIo()
+  clearSpawnHistory()
   resetKanban()
   closeKanbanWorker()
   prefs.reload()

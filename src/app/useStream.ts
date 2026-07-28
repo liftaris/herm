@@ -38,6 +38,7 @@ type Ctx = {
   setUsage: (u: Usage | undefined) => void
   setStatus: (s: string) => void
   setSkin: (s: SkinState) => void
+  setSplash: (v: boolean) => void
   setErrorPulse: (v: boolean) => void
   onVoiceStatus: (state: string) => void
   onVoiceTranscript: (text: string, noSpeechLimit: boolean) => void
@@ -156,8 +157,11 @@ export function useStream(c: Ctx) {
           if (r.note) toast.show({ variant: "info", message: r.note })
         }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err)
+          gw.setSession("")
+          x.setSid("")
           x.setReady(false)
           x.setStarting(false)
+          x.setSplash(false)
           x.setStatus(`session boot failed: ${msg}`)
           x.setErrorPulse(true)
           x.dispatch({ kind: "system", text: `Failed to start session: ${msg}` })

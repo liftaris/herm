@@ -55,6 +55,10 @@ export function trail(id: string): ReadonlyArray<{ name: string; preview?: strin
   return acc.get(id)?.trail ?? []
 }
 
+export function clear(): void {
+  acc.clear()
+}
+
 /** Persist the turn's tree (best-effort) and clear the accumulator. */
 export function flush(gw: Gateway, sessionId: string): void {
   if (acc.size === 0) return

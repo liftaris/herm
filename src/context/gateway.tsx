@@ -54,9 +54,11 @@ export const GatewayProvider = ({ client, children }: { client?: Gateway; childr
     }
     c.on("event", onEvent)
     c.on("exit", onExit)
+    let dead = false
     c.start()
-    c.drain()
+    queueMicrotask(() => { if (!dead) c.drain() })
     return () => {
+      dead = true
       c.off("event", onEvent)
       c.off("exit", onExit)
       if (retry.current.timer) clearTimeout(retry.current.timer)

@@ -132,7 +132,7 @@ export class MockGateway extends EventEmitter implements Gateway {
     for (const ev of this.buf.splice(0)) this.emit("event", ev)
   }
 
-  kill() {}
+  kill() { this.sub = false }
 
   tail(n = 200) { return this.logs.slice(-n).join("\n") }
 

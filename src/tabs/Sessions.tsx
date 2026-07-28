@@ -538,7 +538,8 @@ type Props = {
 // Module-level cache so revisiting the tab paints the previous list on
 // frame 1 while load() refreshes in place. Tests that inject `io` don't
 // write here (see `cached` guard in load) — keeps suites independent.
-const last = { rows: [] as Row[], kids: new Map<string, Row[]>() }
+const cacheHome = () => process.env.HERMES_HOME ?? ""
+const last = { home: "", rows: [] as Row[], kids: new Map<string, Row[]>() }
 
 export const Sessions = memo((props: Props) => {
   const theme = useTheme().theme
@@ -558,7 +559,8 @@ export const Sessions = memo((props: Props) => {
     rename: props.io?.rename ?? sdb.rename,
   }), [props.io])
 
-  const [rows, setRows] = useState<Row[]>(cached ? last.rows : [])
+  const fresh = cached && last.home === cacheHome()
+  const [rows, setRows] = useState<Row[]>(fresh ? last.rows : [])
   const [liveRows, setLiveRows] = useState<Row[]>([])
   const [warn, setWarn] = useState("")
   const [searchErr, setSearchErr] = useState("")
@@ -724,7 +726,7 @@ export const Sessions = memo((props: Props) => {
     const local = new Map(disk.map(r => [r.id, r]))
     const diskRows = disk.filter(keep).map(toRow)
     setRows(diskRows)
-    if (cached) last.rows = diskRows
+    if (cached) { last.home = cacheHome(); last.rows = diskRows }
 
     const [a, r] = await Promise.all([active, rpc])
     if (gen.current !== current) return
@@ -750,7 +752,7 @@ export const Sessions = memo((props: Props) => {
       ]
       final = merged
       setRows(merged)
-      if (cached) last.rows = merged
+      if (cached) { last.home = cacheHome(); last.rows = merged }
       const found = new Map(merged.map(s => [s.id, s]))
       if (live.length) setLiveRows(live.map(s => toLiveRow(s, pick(local, s), pick(found, s))))
     }
@@ -766,7 +768,7 @@ export const Sessions = memo((props: Props) => {
       if (gen.current !== current) return
       const next = new Map(parents.map((row, i) => [row.id, children[i].map(toRow)]))
       setKids(next)
-      if (cached) last.kids = next
+      if (cached) { last.home = cacheHome(); last.kids = next }
     } catch (err) {
       kidsError = err instanceof Error ? err.message : String(err)
     }

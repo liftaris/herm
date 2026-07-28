@@ -1,8 +1,10 @@
 import { useRenderer, useTerminalDimensions } from "@opentui/react"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Profiler, useState, useEffect, useRef, useCallback, useMemo, useReducer, useSyncExternalStore } from "react"
 import * as perf from "./utils/perf"
 import { hasInterp, interpolate } from "./utils/interpolate"
-import { GatewayProvider, useGateway, useGatewayRestart, type Gateway } from "./context/gateway"
+import { GatewayProvider, useGateway, type Gateway } from "./context/gateway"
 import type { SessionInfo, ImageAttachResponse, ImageDetachResponse } from "./context/wire"
 import type { Message, Usage } from "./types/message"
 import { text as msgText } from "./types/message"
@@ -68,31 +70,69 @@ type AppProps = {
   plugins?: ReadonlyArray<HermPlugin>
 }
 
+type Runtime = {
+  home: string
+  seq: number
+  launch: Launch
+}
+
 const BUSY_RE = /session busy|waiting for model response/i
+const profileHome = () => process.env.HERMES_HOME || join(process.env.HOME || homedir(), ".hermes")
 
 export const App = (props: AppProps) => (
   <ThemeProvider initial={props.initialTheme}>
-    <GatewayProvider client={props.gateway}>
-      <ToastProvider>
-        <KeysProvider overrides={props.keyOverrides}>
-          <DialogProvider>
-            <CommandProvider>
-              <PluginProvider plugins={props.plugins}>
-                <BackgroundProvider>
-                  <AppInner launch={props.launch ?? { mode: "new" }} />
-                </BackgroundProvider>
-              </PluginProvider>
-            </CommandProvider>
-          </DialogProvider>
-        </KeysProvider>
-      </ToastProvider>
-    </GatewayProvider>
+    <ToastProvider>
+      <KeysProvider overrides={props.keyOverrides}>
+        <AppShell {...props} />
+      </KeysProvider>
+    </ToastProvider>
   </ThemeProvider>
 )
 
-const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
+const AppShell = (props: AppProps) => {
+  const toast = useToast()
+  const [runtime, setRuntime] = useState<Runtime>(() => ({
+    home: profileHome(),
+    seq: 0,
+    launch: props.launch ?? { mode: "new" },
+  }))
+  const current = useRef(runtime.home); current.current = runtime.home
+
+  const switchProfile = useCallback((newHome: string, name: string) => {
+    const prev = current.current
+    try {
+      rehome(newHome)
+    } catch (err) {
+      try { rehome(prev) } catch { /* best-effort rollback to the last coherent home */ }
+      const msg = err instanceof Error ? err.message : String(err)
+      toast.show({ variant: "error", message: `Profile switch failed: ${msg}` })
+      return
+    }
+    current.current = newHome
+    setRuntime(r => ({ home: newHome, seq: r.seq + 1, launch: { mode: "new", splash: true } }))
+    toast.show({ variant: "info", message: `Switching to '${name}'…` })
+  }, [toast])
+
+  return (
+    <GatewayProvider key={`${runtime.home}:${runtime.seq}`} client={props.gateway}>
+      <DialogProvider>
+        <CommandProvider>
+          <PluginProvider plugins={props.plugins}>
+            <BackgroundProvider>
+              <AppInner launch={runtime.launch} onSwitchProfile={switchProfile} />
+            </BackgroundProvider>
+          </PluginProvider>
+        </CommandProvider>
+      </DialogProvider>
+    </GatewayProvider>
+  )
+}
+
+const AppInner = ({ launch: launch0, onSwitchProfile }: {
+  launch: Launch
+  onSwitchProfile: (newHome: string, name: string) => void
+}) => {
   const gw = useGateway()
-  const gwRestart = useGatewayRestart()
   const dialog = useDialog()
   const dialogOpen = useDialogOpen()
   const themeCtx = useTheme()
@@ -401,7 +441,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
-    setSid, setDurable, setInfo: recordInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
+    setSid, setDurable, setInfo: recordInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setSplash, setErrorPulse, settle,
     onVoiceStatus: state => {
       voice.setRecording(state === "listening" || state === "recording")
       voice.setProcessing(state === "transcribing" || state === "processing")
@@ -568,32 +608,6 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setSwitching(false)
     }
   }, [reset, session, goToTab, toast, gw])
-  // Rebind every HERMES_HOME reader, respawn the gateway subprocess
-  // under the new env, and re-run the boot path. prefs.reload (inside
-  // rehome) retints theme/eikon/keys via usePref; home.reset repaints
-  // tabs. The session is NOT preserved — it belongs to the old
-  // profile's state.db. Confirm step lives in the Agents tab.
-  const switchProfile = useCallback((newHome: string, name: string) => {
-    voice.reset()
-    rehome(newHome)
-    reset()
-    gw.setSession("")
-    setSid("")
-    setDurable("")
-    recordInfo(null)
-    setSkin(deriveSkin(undefined))
-    // Fresh gateway boots behind the splash (same as cold launch); the
-    // respawned process emits gateway.ready → session.info → onSend
-    // dismisses. `summoned` suppresses the continue-prompt — the
-    // outgoing profile's lastReal() is the wrong db.
-    summoned.current = true
-    setSplash(true)
-    launchRef.current = { mode: "new", splash: true }
-    toast.show({ variant: "info", message: `Switching to '${name}'…` })
-    goToTab(CHAT_TAB)
-    gwRestart("new")
-  }, [reset, goToTab, gwRestart, toast, gw])
-
   const loadEikon = useCallback((path: string) => {
     try { setEikon(parseEikonFile(path)) }
     catch { setEikon(undefined) }
@@ -949,7 +963,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
         case AUTOMATION_TAB: return <Automation focused={contentFocused}
                                                 sub={subTabs[AUTOMATION_TAB] ?? 0}
                                                 setSub={autoSub}
-                                                sessionId={sid} onSwitchProfile={switchProfile} />
+                                                sessionId={sid} onSwitchProfile={onSwitchProfile} />
         case CONFIG_TAB: return <ConfigGroup focused={contentFocused}
                                              sub={subTabs[CONFIG_TAB] ?? 0}
                                              setSub={cfgSub} />

@@ -155,6 +155,26 @@ describe("rehome", () => {
     }
   })
 
+  test("closes the state-db worker", async () => {
+    const dbio = await import("../src/io")
+    const close = spyOn(dbio, "close")
+    try {
+      rehome(A)
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      close.mockRestore()
+    }
+  })
+
+  test("clears pending spawn history before the next profile session", async () => {
+    const hist = await import("../src/app/spawnHistory")
+    const calls: unknown[] = []
+    hist.record("start", { subagent_id: "old", task_index: 0, goal: "old work" })
+    rehome(B)
+    hist.flush({ request: (_method: string, params?: unknown) => { calls.push(params); return Promise.resolve({}) } } as never, "new-sid")
+    expect(calls).toEqual([])
+  })
+
   test("preferences.reload notifies usePref subscribers", async () => {
     const prefs = await import("../src/context/preferences")
     let rev = -1
