@@ -417,6 +417,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     stream.interrupted.current = false
     hold.current = false
     pending.current = false
+    setQueue([])
     toast.clear("credits.depleted")
     undone.current = []
     dispatch({ kind: "reset" })
