@@ -32,7 +32,7 @@ export type Action =
   | { kind: "message.start" }
   | { kind: "message.delta"; chunk: string }
   | { kind: "message.interim"; text?: string; streamed?: boolean }
-  | { kind: "message.complete"; text?: string; usage?: Usage }
+  | { kind: "message.complete"; text?: string; usage?: Usage; previewed?: boolean }
   | { kind: "reference"; text: string }
   | { kind: "tool.start"; id: string; name: string; preview?: string; args?: string }
   | { kind: "tool.progress"; name?: string; preview?: string }
@@ -106,7 +106,7 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
         streaming: false,
         hasContent: false,
         toolActive: false,
-        messages: finalize(state.messages, a.text != null ? sanitize(a.text) : undefined, a.usage),
+        messages: finalize(state.messages, a.text != null ? sanitize(a.text) : undefined, a.usage, a.previewed),
       }
 
     case "reference": {
@@ -348,15 +348,15 @@ function sealLastText(messages: Message[]): Message[] {
   return [...messages.slice(0, -1), { ...last, parts: seal(last.parts) }]
 }
 
-function finalize(messages: Message[], final?: string, usage?: Usage): Message[] {
+function finalize(messages: Message[], final?: string, usage?: Usage, previewed?: boolean): Message[] {
   const last = messages[messages.length - 1]
   if (last?.role === "assistant") {
     const tail = last.parts[last.parts.length - 1]
-    const dup = final && last.parts.some(p => p.type === "text" && sameText(p.content, final))
+    const dup = previewed && final && last.parts.some(p => p.type === "text" && sameText(p.content, final))
     const text = tail?.type === "text" && final && sameText(tail.content, final) ? tail.content : final
     const parts = tail?.type === "text" && tail.streaming
       ? [...last.parts.slice(0, -1), { ...tail, content: text || tail.content, streaming: false }]
-      : final && !dup && !sameText(joinText(last.parts), final)
+      : final && !dup && !(previewed && sameText(joinText(last.parts), final))
         ? [...last.parts, { type: "text" as const, content: final, streaming: false }]
         : seal(last.parts)
     return expirePrompts([...messages.slice(0, -1), { ...last, parts, usage }])

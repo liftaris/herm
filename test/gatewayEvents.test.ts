@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { formatProcessNotification, mapEvent, type Side } from "../src/context/events"
-import type { GatewayEvent } from "../src/context/wire"
+import { knownGatewayEvent, type GatewayEvent } from "../src/context/wire"
 
 function map(ev: GatewayEvent, side: Partial<Side> = {}) {
   const calls: Record<string, unknown[]> = {}
@@ -68,9 +68,14 @@ describe("mapEvent", () => {
   test("message.complete normal", () => {
     const u = { input: 1, output: 2, total: 3 }
     const r = map({ type: "message.complete", payload: { text: "hi", usage: u } })
-    expect(r.action).toEqual({ kind: "message.complete", text: "hi", usage: u })
+    expect(r.action).toEqual({ kind: "message.complete", text: "hi", usage: u, previewed: undefined })
     expect(r.calls.usage).toEqual([u])
     expect(r.calls.done).toBeDefined()
+  })
+
+  test("message.complete preserves response_previewed for reducer dedupe", () => {
+    expect(map({ type: "message.complete", payload: { text: "hi", response_previewed: true } }).action)
+      .toEqual({ kind: "message.complete", text: "hi", usage: undefined, previewed: true })
   })
 
   test("message.complete status=error → error action", () => {
@@ -238,6 +243,27 @@ describe("mapEvent", () => {
       .toEqual({ kind: "prompt", id: "k", req: { variant: "secret", request_id: "k", prompt: "p", env_var: "API_KEY" } })
     expect(map({ type: "terminal.read.request", payload: { request_id: "term", start: 4, count: 12 } }).action)
       .toEqual({ kind: "prompt", id: "term", req: { variant: "terminal-read", request_id: "term", start: 4, count: 12 } })
+  })
+
+  test("current gateway side-channel events are known no-ops", () => {
+    const names = [
+      "agent.terminal.output",
+      "billing.step_up.verification",
+      "moa.phase",
+      "moa.progress",
+      "pet.generate.progress",
+      "pet.hatch.progress",
+      "preview.restart.complete",
+      "preview.restart.progress",
+      "reaction",
+      "terminal.close",
+      "tool.output_risk",
+      "voice.interrupted",
+    ] as const
+    for (const name of names) {
+      expect(knownGatewayEvent(name)).toBe(true)
+      expect(map({ type: name, session_id: "sid", payload: { text: "SIDE_CHANNEL_SENTINEL" } } as GatewayEvent).action).toBeNull()
+    }
   })
 
   test("review.summary → persistent system line (trimmed)", () => {

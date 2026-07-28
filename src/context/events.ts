@@ -106,8 +106,8 @@ export function mapEvent(ev: GatewayEvent, side: Side): Action | null {
       if (p?.status === "error")
         return { kind: "error", text: p.text || "request failed — see messages above" }
       if (p?.status === "interrupted")
-        return { kind: "message.complete", text: (p.text || "") + "\n\n*[interrupted]*", usage: p?.usage }
-      return { kind: "message.complete", text: p?.text ?? undefined, usage: p?.usage }
+        return { kind: "message.complete", text: (p.text || "") + "\n\n*[interrupted]*", usage: p?.usage, previewed: p?.response_previewed }
+      return { kind: "message.complete", text: p?.text ?? undefined, usage: p?.usage, previewed: p?.response_previewed }
     }
 
     case "tool.start":
@@ -165,6 +165,20 @@ export function mapEvent(ev: GatewayEvent, side: Side): Action | null {
       side.onStatus?.(agg ? `aggregating with ${agg}…` : "aggregating…")
       return null
     }
+
+    case "agent.terminal.output":
+    case "billing.step_up.verification":
+    case "moa.phase":
+    case "moa.progress":
+    case "pet.generate.progress":
+    case "pet.hatch.progress":
+    case "preview.restart.complete":
+    case "preview.restart.progress":
+    case "reaction":
+    case "terminal.close":
+    case "tool.output_risk":
+    case "voice.interrupted":
+      return null
 
     case "subagent.start":
     case "subagent.thinking":

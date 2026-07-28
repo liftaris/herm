@@ -81,6 +81,28 @@ describe("turnReducer", () => {
     expect(parts[0]).toMatchObject({ streaming: false })
   })
 
+  test("identical interim and final text remain distinct without preview marker", () => {
+    const s = run([
+      { kind: "message.start" },
+      { kind: "message.interim", text: "SAME_REPLY_SENTINEL" },
+      { kind: "message.complete", text: "SAME_REPLY_SENTINEL" },
+    ])
+    const parts = last(s).parts
+    expect(kinds(parts)).toEqual(["text", "text"])
+    expect(parts.filter(p => p.type === "text" && p.content === "SAME_REPLY_SENTINEL")).toHaveLength(2)
+  })
+
+  test("response-previewed final text dedupes matching interim text", () => {
+    const s = run([
+      { kind: "message.start" },
+      { kind: "message.interim", text: "PREVIEWED_REPLY_SENTINEL" },
+      { kind: "message.complete", text: "PREVIEWED_REPLY_SENTINEL", previewed: true },
+    ])
+    const parts = last(s).parts
+    expect(kinds(parts)).toEqual(["text"])
+    expect(parts[0]).toMatchObject({ type: "text", content: "PREVIEWED_REPLY_SENTINEL", streaming: false })
+  })
+
   test("complete seals trailing stream and attaches usage", () => {
     const usage = { input: 10, output: 5, total: 15 }
     const s = run([
