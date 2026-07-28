@@ -1,5 +1,5 @@
 import { skins } from "../context/skin"
-import { SCHEMA, SCHEMA_KEYS, type ConfigEffect } from "./schema"
+import { APPROVAL_MODES, SCHEMA, SCHEMA_KEYS, type ConfigEffect } from "./schema"
 import { route, TOOL_PROGRESS } from "./lane"
 
 export type FieldType = "boolean" | "select" | "number" | "string" | "readonly"
@@ -30,7 +30,7 @@ const SELECTS: Record<string, string[]> = {
   "display.details_mode": ["hidden", "collapsed", "expanded"],
   "display.thinking_mode": ["collapsed", "truncated", "full"],
   "display.tool_progress": [...TOOL_PROGRESS],
-  "approvals.mode": ["manual", "ask", "yolo", "deny"],
+  "approvals.mode": [...APPROVAL_MODES],
   "onboarding.profile_build": ["ask", "off"],
   "streaming.transport": ["auto", "draft", "edit", "off"],
   "tools.tool_search.enabled": ["auto", "on", "off"],

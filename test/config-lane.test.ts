@@ -19,6 +19,7 @@ describe("lane.route", () => {
   test("whitelisted dotted keys → rpc alias", () => {
     expect(route("agent.reasoning_effort")).toEqual({ via: "rpc", alias: "reasoning", toWire: undefined })
     expect(route("model")).toEqual({ via: "rpc", alias: "model", toWire: undefined })
+    expect(route("approvals.mode")).toEqual({ via: "rpc", alias: "approval_mode", toWire: undefined })
     const compact = route("display.tui_compact") as { via: "rpc"; alias: string; toWire: (v: unknown) => string }
     expect(compact.alias).toBe("compact")
     expect(compact.toWire(true)).toBe("on")
@@ -115,6 +116,15 @@ describe("lane.writeConfig", () => {
     expect(res).toEqual({ ok: ["display.tool_progress"], failed: [], warnings: [] })
     expect(gw.calls).toEqual([
       { method: "config.set", params: { key: "verbose", value: "verbose" } },
+    ])
+  })
+
+  test("approval mode writes through live canonical RPC alias", async () => {
+    const gw = mockGw({ "config.set": () => ({}) })
+    const res = await writeConfig(gw, [{ key: "approvals.mode", to: "smart" }])
+    expect(res).toEqual({ ok: ["approvals.mode"], failed: [], warnings: [] })
+    expect(gw.calls).toEqual([
+      { method: "config.set", params: { key: "approval_mode", value: "smart" } },
     ])
   })
 

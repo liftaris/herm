@@ -19,9 +19,11 @@ describe("config schema generator", () => {
   test("emits deterministic output and detects stale artifacts", async () => {
     const root = mkdtempSync(join(tmpdir(), "herm-schema-"))
     const dir = join(root, "agent", "hermes_cli")
+    const gw = join(root, "agent", "tui_gateway")
     const one = join(root, "one.ts")
     const two = join(root, "two.ts")
     mkdirSync(dir, { recursive: true })
+    mkdirSync(gw, { recursive: true })
     writeFileSync(join(dir, "config.py"), `DEFAULT_CONFIG = {
     "_config_version": 1,
     "agent": {
@@ -33,10 +35,11 @@ describe("config schema generator", () => {
     },
 }
 `)
+    writeFileSync(join(gw, "server.py"), `_APPROVAL_MODES = frozenset({"manual", "smart", "off"})\n`)
     const agent = join(root, "agent")
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: agent })
     expect(git("init", "-q").exitCode).toBe(0)
-    expect(git("add", "hermes_cli/config.py").exitCode).toBe(0)
+    expect(git("add", "hermes_cli/config.py", "tui_gateway/server.py").exitCode).toBe(0)
     expect(git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture").exitCode).toBe(0)
     const sha = new TextDecoder().decode(git("rev-parse", "HEAD").stdout).trim()
 
@@ -49,6 +52,7 @@ describe("config schema generator", () => {
       expect(first).toContain('"compression.threshold"')
       expect(first).not.toContain('"_config_version"')
       expect(first).toContain(`Source: hermes-agent@${sha} hermes_cli/config.py`)
+      expect(first).toContain('export const APPROVAL_MODES = ["manual","smart","off"] as const')
       expect((await run(root, ["--check", "--out", one])).code).toBe(0)
 
       writeFileSync(one, `${first}\n// stale\n`)

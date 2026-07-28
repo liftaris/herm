@@ -35,6 +35,7 @@ export const RPC_ALIAS: Record<string, RpcAlias> = {
   "display.tui_mouse": { alias: "mouse", toWire: onOff },
   "display.skin": { alias: "skin" },
   "display.personality": { alias: "personality" },
+  "approvals.mode": { alias: "approval_mode" },
   custom_prompt: { alias: "prompt" },
 }
 

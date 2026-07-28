@@ -44,6 +44,13 @@ describe("rules", () => {
     expect(check("display.tool_progress", "log")).toMatch(/one of/)
   })
 
+  test("approval mode accepts only canonical modes", () => {
+    for (const mode of ["manual", "smart", "off"])
+      expect(check("approvals.mode", mode), mode).toBeNull()
+    for (const mode of ["ask", "yolo", "deny"])
+      expect(check("approvals.mode", mode), mode).toMatch(/manual \| smart \| off/)
+  })
+
   test("nonNeg accepts 0", () => {
     expect(check("agent.gateway_timeout", "0")).toBeNull()
     expect(check("agent.gateway_timeout", "-1")).toMatch(/≥/)

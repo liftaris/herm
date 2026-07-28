@@ -35,6 +35,16 @@ describe("config/index", () => {
     expect(f.options).not.toContain("log")
   })
 
+  test("approval mode uses canonical producer-derived modes", () => {
+    const f = buildFields({}).find(x => x.key === "approvals.mode")!
+    expect(f.type).toBe("select")
+    expect(f.value).toBe("smart")
+    expect(f.options).toEqual(["manual", "smart", "off"])
+    expect(f.options).not.toContain("ask")
+    expect(f.options).not.toContain("yolo")
+    expect(f.options).not.toContain("deny")
+  })
+
   test("unknown user key surfaces as an extra field", () => {
     const fs = buildFields({ mystery: { flag: true } })
     const f = fs.find(x => x.key === "mystery.flag")

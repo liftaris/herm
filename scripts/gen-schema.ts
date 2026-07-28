@@ -30,9 +30,11 @@ if (!agentRoot) {
   process.exit(1)
 }
 const configPy = join(agentRoot, "hermes_cli", "config.py")
+const serverPy = join(agentRoot, "tui_gateway", "server.py")
 const src = readFileSync(configPy, "utf8")
 const tls = src.includes("ssl_ca_cert") && src.includes("ssl_verify")
 const sha = (() => {
+  if (process.env.HERMES_AGENT_SHA) return process.env.HERMES_AGENT_SHA
   const p = Bun.spawnSync(["git", "-C", agentRoot, "rev-parse", "HEAD"])
   return p.exitCode === 0 ? new TextDecoder().decode(p.stdout).trim() : "unknown"
 })()
@@ -44,9 +46,17 @@ const py = `
 import ast, json, re, sys
 
 path = ${JSON.stringify(configPy)}
+server_path = ${JSON.stringify(serverPy)}
 with open(path, encoding="utf-8") as f:
     src = f.read()
+with open(server_path, encoding="utf-8") as f:
+    server = f.read()
 lines = src.splitlines()
+
+mode_match = re.search(r"^_APPROVAL_MODES\\s*=\\s*frozenset\\((\\{.*?\\})\\)", server, re.M | re.S)
+if not mode_match:
+    raise RuntimeError("could not find tui_gateway.server _APPROVAL_MODES")
+approval_modes = re.findall(r'"([^"]+)"', mode_match.group(1))
 
 # locate DEFAULT_CONFIG = { ... } by brace balance
 start = next(i for i, l in enumerate(lines) if re.match(r"^DEFAULT_CONFIG\\s*=\\s*{", l))
@@ -144,7 +154,7 @@ def walk(node, prefix=""):
             yield p, {"type": t, "default": v, "doc": docs.get(p, "")}
 
 out = dict(walk(tree))
-json.dump({"source": path, "entries": out}, sys.stdout)
+json.dump({"source": path, "entries": out, "approval_modes": approval_modes}, sys.stdout)
 `
 
 const proc = Bun.spawnSync(["python3", "-c", py])
@@ -156,6 +166,7 @@ if (proc.exitCode !== 0) {
 const extracted = JSON.parse(new TextDecoder().decode(proc.stdout)) as {
   source: string
   entries: Record<string, { type: string; default: unknown; doc: string }>
+  approval_modes: string[]
 }
 
 // ─── augment ─────────────────────────────────────────────────────────
@@ -253,6 +264,8 @@ const body = [
   `}`,
   ``,
   `export const SCHEMA_KEYS = Object.keys(SCHEMA)`,
+  ``,
+  `export const APPROVAL_MODES = ${JSON.stringify(extracted.approval_modes)} as const`,
   ``,
 ].join("\n")
 

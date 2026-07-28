@@ -10,6 +10,7 @@
  */
 
 import { TOOL_PROGRESS } from "./lane"
+import { APPROVAL_MODES } from "./schema"
 
 type Rule = (raw: string) => string | null
 
@@ -90,7 +91,7 @@ export const RULES: Record<string, Rule> = {
   "display.tool_progress": oneOf(...TOOL_PROGRESS),
   "display.final_response_markdown": oneOf("render", "strip", "raw"),
   "logging.level": oneOf("DEBUG", "INFO", "WARNING", "ERROR"),
-  "approvals.mode": oneOf("manual", "ask", "yolo", "deny"),
+  "approvals.mode": oneOf(...APPROVAL_MODES),
   "code_execution.mode": oneOf("project", "strict"),
   "onboarding.profile_build": oneOf("ask", "off"),
   "streaming.transport": oneOf("auto", "draft", "edit", "off"),

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { SCHEMA, SCHEMA_KEYS, type ConfigSchemaEntry } from "../src/config/schema"
+import { APPROVAL_MODES, SCHEMA, SCHEMA_KEYS, type ConfigSchemaEntry } from "../src/config/schema"
 
 describe("schema", () => {
   test("no internal (_-prefixed) keys leak", () => {
@@ -40,6 +40,14 @@ describe("schema", () => {
   test("user-adds-only extras are present", () => {
     for (const k of ["custom_providers", "mcp_servers", "fallback_model"])
       expect(SCHEMA[k], k).toBeDefined()
+  })
+
+  test("approval schema tracks current Hermes defaults", () => {
+    expect([...APPROVAL_MODES]).toEqual(["manual", "smart", "off"])
+    expect(SCHEMA["approvals.mode"].default).toBe("smart")
+    expect(SCHEMA["approvals.timeout"].default).toBe(300)
+    expect(SCHEMA["approvals.smart_policy"].type).toBe("str")
+    expect(SCHEMA["approvals.denial_breaker_threshold"].default).toBe(3)
   })
 
   test("docs captured for commented leaves", () => {
