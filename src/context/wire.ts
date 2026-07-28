@@ -167,6 +167,7 @@ export type SessionInfo = {
   model?: string
   cwd?: string
   session_id?: string
+  stored_session_id?: string
   /**
    * Live tool catalog from gateway session.info. state.db is canonical for
    * historical sessions, while legacy sessions/session_*.json snapshots are
@@ -218,12 +219,14 @@ export type SessionInfo = {
 
 export type SessionCreateResponse = {
   session_id: string
+  stored_session_id?: string
   info?: SessionInfo & { credential_warning?: string }
 }
 
 export type SessionResumeResponse = {
   session_id: string
   resumed?: string
+  session_key?: string
   messages: TranscriptMessage[]
   message_count?: number
   info?: SessionInfo

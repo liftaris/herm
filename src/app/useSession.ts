@@ -38,9 +38,9 @@ type CompressResult = {
   }
 }
 
-type Booted = { id: string; messages: Message[]; note?: string; info?: SessionInfo }
-type Resumed = { id: string; messages: Message[]; info?: SessionInfo }
-type Activated = { id: string; messages: Message[]; info?: SessionInfo; running: boolean; status?: string; startedAt?: number }
+type Booted = { id: string; key: string; messages: Message[]; note?: string; info?: SessionInfo }
+type Resumed = { id: string; key: string; messages: Message[]; info?: SessionInfo }
+type Activated = { id: string; key: string; messages: Message[]; info?: SessionInfo; running: boolean; status?: string; startedAt?: number }
 type Agents = { processes?: Array<{ status?: string }> }
 type Close = { preserveBackground?: boolean }
 
@@ -50,7 +50,7 @@ export const normalize = (sid: string): string =>
 type SessionOps = {
   /** Establish the initial session per launch intent. */
   boot: (launch: Launch) => Promise<Booted>
-  create: () => Promise<{ id: string; info?: SessionInfo }>
+  create: () => Promise<{ id: string; key: string; info?: SessionInfo }>
   resume: (sid: string) => Promise<Resumed>
   activate: (sid: string) => Promise<Activated>
   /** Finalize a gateway session (best-effort — swallows errors). */
@@ -80,10 +80,11 @@ export function useSession(): SessionOps {
     const target = normalize(sid)
     const res = await gw.request<SessionResumeResponse>("session.resume", { session_id: target })
     const id = res.session_id
+    const key = res.session_key ?? res.resumed ?? target
     gw.setSession(id)
-    preferences.set("lastSessionId", res.resumed ?? target)
+    preferences.set("lastSessionId", key)
     const messages = res.messages?.length ? transcriptToMessages(res.messages) : []
-    return { id, messages, info: res.info }
+    return { id, key, messages, info: res.info }
   }, [gw])
 
   // No `cols` param and no `terminal.resize` RPC on SIGWINCH: herm renders
@@ -94,20 +95,24 @@ export function useSession(): SessionOps {
   // checkpoint diff RPC — both default-80 is fine for our flow.
   const create = useCallback(async () => {
     const res = await gw.request<SessionCreateResponse>("session.create", {})
+    const key = res.stored_session_id ?? res.session_id
     gw.setSession(res.session_id)
-    return { id: res.session_id, info: res.info }
+    preferences.set("lastSessionId", key)
+    return { id: res.session_id, key, info: res.info }
   }, [gw])
 
   const activate = useCallback(async (sid: string): Promise<Activated> => {
     const target = normalize(sid)
     const res = await gw.request<SessionActivateResponse>("session.activate", { session_id: target })
     const id = res.session_id
+    const key = res.session_key ?? id
     gw.setSession(id)
-    preferences.set("lastSessionId", res.session_key ?? id)
+    preferences.set("lastSessionId", key)
     const history = res.messages?.length ? transcriptToMessages(res.messages) : []
     const running = Boolean(res.running || res.status === "working" || res.status === "waiting")
     return {
       id,
+      key,
       info: res.info,
       messages: [...history, ...inflightMessages(res.inflight)],
       running,

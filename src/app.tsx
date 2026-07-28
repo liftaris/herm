@@ -106,6 +106,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [ready, setReady] = useState(false)
   const [sid, setSid] = useState("")
   const sidRef = useRef(sid); sidRef.current = sid
+  const [durable, setDurable] = useState("")
+  const durableRef = useRef(durable); durableRef.current = durable
   const [starting, setStarting] = useState(false)
   const startRef = useRef(starting); startRef.current = starting
   const active = turn.streaming || starting
@@ -141,7 +143,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   // emits the mode-reset blob. Mount-once: gw/renderer identity is stable.
   useEffect(() => {
     process.removeAllListeners("SIGINT")
-    process.on("SIGINT", () => quit(renderer, sidRef.current, titleRef.current, gw))
+    process.on("SIGINT", () => quit(renderer, durableRef.current || sidRef.current, titleRef.current, gw))
   }, [renderer, gw])
   // CONTROL=1 binds 127.0.0.1 by default; if the user overrode
   // CONTROL_BIND to a non-loopback host, the HTTP server is exposed to
@@ -199,8 +201,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const creating = useRef(false)
   const [composing, setComposing] = useState(false)
   const splashLast = useMemo(
-    () => launch.mode === "new" ? lastReal() : undefined,
-    [launch.mode],
+    () => launch0.mode === "new" ? lastReal() : undefined,
+    [launch0.mode],
   )
   // Stable Splash props — inline `{…}` in JSX is a fresh reference per
   // AppInner render (= per key event) and defeats Splash's memo().
@@ -269,7 +271,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   useEffect(() => {
     const restart = (mode: "resume" | "new" = "resume") => {
-      const sid = sidRef.current
+      const sid = durableRef.current || sidRef.current
       if (mode === "resume" && sid) launchRef.current = { mode: "resume", sid, splash: false }
       gw.setSession("")
       setReady(false)
@@ -279,7 +281,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     }
     const exit = (code: number | null) => {
       const text = `gateway exited${code === null ? "" : ` (${code})`}`
-      const sid = sidRef.current
+      const sid = durableRef.current || sidRef.current
       if (sid) launchRef.current = { mode: "resume", sid, splash: false }
       gw.setSession("")
       setReady(false)
@@ -390,7 +392,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
-    setSid, setInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
+    setSid, setDurable, setInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
     onVoiceStatus: state => {
       voice.setRecording(state === "listening" || state === "recording")
       voice.setProcessing(state === "transcribing" || state === "processing")
@@ -441,6 +443,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       const r = await session.create()
       reset()
       setSid(r.id)
+      setDurable(r.key)
+      launchRef.current = { mode: "resume", sid: r.key, splash: false }
       if (r.info) { setInfo(r.info); setUsage(r.info.usage) }
       setReady(true)
       setStarting(false)
@@ -460,6 +464,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const switchSession = useCallback(async (target: string) => {
     const prev = sidRef.current
+    const old = durableRef.current
     // Keep splash visible while the resume RPC lands so the user sees
     // the ornate frame instead of the empty-transcript welcome. summoned
     // suppresses the continue-prompt (we've already chosen a session);
@@ -474,6 +479,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       const res = await session.resume(target)
       reset()
       setSid(res.id)
+      setDurable(res.key)
+      launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
         setInfo(res.info)
         setUsage(res.info.usage)
@@ -492,6 +499,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       if (prev) {
         gw.setSession(prev)
         setSid(prev)
+        setDurable(old)
         setReady(true)
       }
       dispatch({ kind: "system", text: `Failed to resume: ${err instanceof Error ? err.message : String(err)}` })
@@ -510,6 +518,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const activateSession = useCallback(async (target: string) => {
     const prev = sidRef.current
+    const old = durableRef.current
     summoned.current = true
     setSplash(true)
     setSwitching(true)
@@ -520,6 +529,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       const res = await session.activate(target)
       reset()
       setSid(res.id)
+      setDurable(res.key)
+      launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
         setInfo(res.info)
         setUsage(res.info.usage)
@@ -536,6 +547,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       if (prev) {
         gw.setSession(prev)
         setSid(prev)
+        setDurable(old)
         setReady(true)
       }
       dispatch({ kind: "system", text: `Failed to activate: ${err instanceof Error ? err.message : String(err)}` })
@@ -557,6 +569,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     reset()
     gw.setSession("")
     setSid("")
+    setDurable("")
     setInfo(null)
     setSkin(deriveSkin(undefined))
     // Fresh gateway boots behind the splash (same as cold launch); the
@@ -612,7 +625,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const sendRef = useRef<(raw: string) => void>(() => {})
   const slash = useSlash({
     dispatch, session, turnRef, queueRef, sendRef, composer, summoned, undone,
-    capabilities, info, sid, title: caption, skin,
+    capabilities, info, sid, resumeId: durable || sid, title: caption, skin,
     setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo, setUsage, setTitle,
     newSession, switchSession, activateSession, rewind, goTo, attachClipboard, voiceToggle: voice.toggle,
   })
@@ -621,7 +634,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     // Bare exit/quit/:q — pass through as literals so a
     // reflex `exit⏎` works without the leading slash.
     if (["exit", "quit", ":q", ":q!", ":wq"].includes(raw.trim()))
-      return quit(renderer, sidRef.current, titleRef.current, gw)
+      return quit(renderer, durableRef.current || sidRef.current, titleRef.current, gw)
     if (detaching.current > 0) {
       if (raw.trim()) composer.current?.set(raw)
       setStatus("detaching image…")
@@ -830,7 +843,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       hold.current = true
       interrupt()
     },
-    onQuit: () => quit(renderer, sid, caption, gw),
+    onQuit: () => quit(renderer, durable || sid, caption, gw),
     onQuitArm: (label) =>
       toast.show({ variant: "info", message: `${label} again to quit` }),
     onInterruptNotice: () => {

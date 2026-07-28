@@ -29,6 +29,7 @@ type Ctx = {
   goalHook: { check: (sid: string) => void }
 
   setSid: (id: string) => void
+  setDurable: (id: string) => void
   setInfo: (i: SessionInfo) => void
   setReady: (r: boolean) => void
   setTitle: (t: string) => void
@@ -85,6 +86,14 @@ export function useStream(c: Ctx) {
   // action flushes synchronously first so part ordering is preserved.
   const deltas = useRef({ text: "", think: "", timer: null as ReturnType<typeof setTimeout> | null })
 
+  const store = useCallback((key?: string, id?: string) => {
+    const sid = key ?? id
+    if (!sid) return
+    ctx.current.setDurable(sid)
+    ctx.current.launchRef.current = { mode: "resume", sid, splash: false }
+    preferences.set("lastSessionId", sid)
+  }, [])
+
   const flush = useCallback(() => {
     const d = deltas.current
     if (d.timer) { clearTimeout(d.timer); d.timer = null }
@@ -99,7 +108,7 @@ export function useStream(c: Ctx) {
       .then(r => {
         if (ctx.current.sidRef.current !== sid) return
         ctx.current.setTitle(r.title ?? "")
-        if (r.session_key) preferences.set("lastSessionId", r.session_key)
+        store(r.session_key)
       })
       .catch(() => {})
     if (ms <= 0) return run()
@@ -140,6 +149,7 @@ export function useStream(c: Ctx) {
       onReady: () => {
         x.session.boot(x.launchRef.current).then((r) => {
           x.setSid(r.id)
+          store(r.key, r.id)
           if (r.info) { x.setInfo(r.info); x.setUsage(r.info.usage) }
           x.sessionStart.current = Date.now()
           if (r.messages.length) x.dispatch({ kind: "load", messages: r.messages })
@@ -163,6 +173,7 @@ export function useStream(c: Ctx) {
           x.setStatus("")
         }
         if (si.session_id) x.setSid(si.session_id)
+        if (si.stored_session_id) store(si.stored_session_id, si.session_id ?? ev.session_id)
         x.settle()
         // Use title from session.info directly — avoids a redundant
         // session.title RPC that would re-emit session.info and create

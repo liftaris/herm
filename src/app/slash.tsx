@@ -62,6 +62,7 @@ export type SlashCtx = {
   capabilities: SessionCapabilities
   info: SessionInfo | null
   sid: string
+  resumeId: string
   title: string
   skin: SkinState
 
@@ -400,7 +401,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
             })
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
-        case "quit": quit(renderer, x.sid, x.title, gw); return
+        case "quit": quit(renderer, x.resumeId || x.sid, x.title, gw); return
         case "queue":
           if (!arg) { x.dispatch({ kind: "system", text: `${x.queueRef.current.length} queued` }); return }
           x.setQueue(q => [...q, arg]); return
