@@ -183,6 +183,7 @@ const sub = (c: string, p: string) =>
 const top = (s: string) =>
   `(${s}.parent_session_id IS NULL OR EXISTS (SELECT 1 FROM sessions p ` +
   `WHERE p.id = ${s}.parent_session_id AND ${branch(s, "p")}))`
+const listable = (s: string) => `(NOT (${delegated(s)}) AND ${top(s)})`
 const active = (s: string) =>
   `COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = ${s}.id), ${s}.started_at)`
 const order = (c: string) =>
@@ -294,7 +295,7 @@ export const lastReal = (): SessionRow | undefined => {
   const hit = q(`
     WITH RECURSIVE chain(root_id, cur_id) AS (
       SELECT s.id, s.id FROM sessions s
-      WHERE s.source IN ('tui', 'cli') AND ${top("s")}
+      WHERE s.source IN ('tui', 'cli') AND ${listable("s")}
       UNION ALL
       SELECT c.root_id, child.id
       FROM chain c
@@ -351,13 +352,12 @@ function walkUp(sid: string): string {
 export function roots(limit = 30): SessionRow[] {
   const end = perf.mark("io:sessions.roots")
   try {
-    // Root filter: no parent, OR parent link is a branch. Subagents
-    // and continuations are hidden — they surface via children()/
-    // lineage() instead. `p`/`c` aliases satisfy SUB/CONT/BR above.
+    // Root filter: no parent, OR parent link is a branch, excluding
+    // delegate markers. `p`/`c` aliases satisfy SUB/CONT/BR above.
     const raw = (q(
       `WITH RECURSIVE chain(root_id, cur_id) AS (
          SELECT s.id, s.id FROM sessions s
-         WHERE ${top("s")}
+         WHERE ${listable("s")}
          UNION ALL
          SELECT c.root_id, child.id
          FROM chain c
@@ -372,7 +372,7 @@ export function roots(limit = 30): SessionRow[] {
        )
        SELECT ${COLS} FROM sessions s
        LEFT JOIN stats st ON st.root_id = s.id
-       WHERE ${top("s")}
+       WHERE ${listable("s")}
        ORDER BY COALESCE(st.tick, s.started_at) DESC, s.started_at DESC, s.id DESC
        LIMIT ?`,
     )?.all(limit) ?? []) as Raw[]

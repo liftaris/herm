@@ -273,6 +273,22 @@ describe("queryRecentSessions (gsk.13: root-only + subagent_count + tip projecti
     expect(lastReal()?.id).toBe("oldtip")
   })
 
+  test("hides parentless delegate-marker rows from recent roots and resume target", () => {
+    const db = seed()
+    sess(db, "normal", "tui", 100, { message_count: 1, title: "Normal" })
+    sess(db, "delegated", "tui", 200, {
+      message_count: 1,
+      title: "Delegated",
+      model_config: JSON.stringify({ _delegate_from: "__orphaned__" }),
+    })
+    msg(db, "normal", "user", "normal work", 100)
+    msg(db, "delegated", "user", "delegated work", 300)
+    db.close()
+
+    expect(queryRecentSessions(10).map(r => r.id)).toEqual(["normal"])
+    expect(lastReal()?.id).toBe("normal")
+  })
+
   test("projects compression root to a continuation inserted before parent ended_at", () => {
     const db = seed()
     sess(db, "root", "tui", 1700000000,
