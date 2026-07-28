@@ -31,7 +31,8 @@ export const openStateDb = (): Database => {
     cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0,
     reasoning_tokens INTEGER DEFAULT 0,
     estimated_cost_usd REAL, actual_cost_usd REAL,
-    parent_session_id TEXT
+    parent_session_id TEXT,
+    model_config TEXT
   )`)
   db.run(`CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

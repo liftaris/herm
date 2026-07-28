@@ -191,6 +191,19 @@ describe("queryRecentSessions (gsk.13: root-only + subagent_count + tip projecti
     expect(ids).toEqual(["branch", "root"])
   })
 
+  test("shows model_config branch children even when the parent stays live", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000)
+    sess(db, "branch", "tui", 1700000500, {
+      parent_session_id: "root",
+      model_config: JSON.stringify({ _branched_from: "root" }),
+    })
+    db.close()
+
+    const ids = queryRecentSessions(10).map(r => r.id).sort()
+    expect(ids).toEqual(["branch", "root"])
+  })
+
   test("projects compression root forward to tip (one row, tip identity, root started_at)", () => {
     const db = seed()
     // Root (compressed) → continuation A (compressed) → continuation B (live tip).
@@ -232,6 +245,86 @@ describe("queryRecentSessions (gsk.13: root-only + subagent_count + tip projecti
     expect(rows[0].id).toBe("tip")
     expect(rows[0].started_at).toBe(1600000000)    // root's
     expect(rows[0].last_active).toBe(1700099999)   // tip's
+  })
+
+  test("projects compression root to a continuation inserted before parent ended_at", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000,
+      { ended_at: 1700003000, end_reason: "compression", title: "Root" })
+    sess(db, "cont", "tui", 1700002500,
+      { parent_session_id: "root", title: "Race continuation" })
+    db.close()
+
+    const rows = queryRecentSessions(10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe("cont")
+    expect(rows[0].lineage_root_id).toBe("root")
+    expect(chainTip("root")).toBe("cont")
+  })
+
+  test("prefers the live continuation over a later closed stale sibling", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000,
+      { ended_at: 1700003000, end_reason: "compression", title: "Root" })
+    sess(db, "stale", "tui", 1700004000,
+      { parent_session_id: "root", ended_at: 1700004100, end_reason: "ws_orphan_reap", title: "Stale" })
+    sess(db, "live", "tui", 1700002500,
+      { parent_session_id: "root", title: "Live" })
+    msg(db, "stale", "user", "stale message", 1700009000)
+    msg(db, "live", "user", "live message", 1700005000)
+    db.close()
+
+    const rows = queryRecentSessions(10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe("live")
+    expect(chainTip("root")).toBe("live")
+    expect(queryLineage("root").compressedTo).toEqual({ id: "live", title: "Live" })
+    expect(queryLineage("stale")).toEqual({})
+  })
+
+  test("prefers a compression child over a newer live sibling", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000,
+      { ended_at: 1700003000, end_reason: "compression", title: "Root" })
+    sess(db, "live", "tui", 1700005000, { parent_session_id: "root", title: "Live" })
+    sess(db, "chain", "tui", 1700002500, {
+      parent_session_id: "root",
+      ended_at: 1700003500,
+      end_reason: "compression",
+      title: "Chain",
+    })
+    sess(db, "tip", "tui", 1700003600, { parent_session_id: "chain", title: "Tip" })
+    db.close()
+
+    expect(chainTip("root")).toBe("tip")
+    expect(queryLineage("root").compressedTo).toEqual({ id: "chain", title: "Chain" })
+    expect(queryLineage("live")).toEqual({})
+  })
+
+  test("excludes branch, delegate, and tool children from compression tips", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000,
+      { ended_at: 1700003000, end_reason: "compression", title: "Root" })
+    sess(db, "branch", "tui", 1700004000, {
+      parent_session_id: "root",
+      title: "Branch",
+      model_config: JSON.stringify({ _branched_from: "root" }),
+    })
+    sess(db, "delegate", "tui", 1700005000, {
+      parent_session_id: "root",
+      title: "Delegate",
+      model_config: JSON.stringify({ _delegate_from: "root" }),
+    })
+    sess(db, "tool", "tool", 1700006000, { parent_session_id: "root", title: "Tool" })
+    sess(db, "cont", "tui", 1700002500, { parent_session_id: "root", title: "Cont" })
+    db.close()
+
+    const ids = queryRecentSessions(10).map(r => r.id).sort()
+    expect(ids).toEqual(["branch", "cont"])
+    expect(chainTip("root")).toBe("cont")
+    expect(queryLineage("branch")).toEqual({})
+    expect(queryLineage("delegate")).toEqual({})
+    expect(queryLineage("tool")).toEqual({})
   })
 
   test("non-chain roots get lineage_root_id = null", () => {
@@ -411,8 +504,8 @@ describe("kind() — pure classifier (single source of truth for parent→child 
     expect(kind({ ended_at: null, end_reason: null }, { started_at: 100 })).toBe("subagent")
     expect(kind({ ended_at: null, end_reason: "compression" }, { started_at: 100 })).toBe("subagent")
   })
-  test("child started before parent ended → subagent", () => {
-    expect(kind({ ended_at: 200, end_reason: "compression" }, { started_at: 100 })).toBe("subagent")
+  test("clean child of compression-ended parent → continuation even before ended_at", () => {
+    expect(kind({ ended_at: 200, end_reason: "compression" }, { started_at: 100 })).toBe("continuation")
   })
   test("child started at/after compression-ended parent → continuation", () => {
     expect(kind({ ended_at: 100, end_reason: "compression" }, { started_at: 100 })).toBe("continuation")
@@ -420,6 +513,20 @@ describe("kind() — pure classifier (single source of truth for parent→child 
   })
   test("child started at/after branched parent → branch", () => {
     expect(kind({ ended_at: 100, end_reason: "branched" }, { started_at: 200 })).toBe("branch")
+  })
+  test("model_config branch marker wins over timestamp and parent reason", () => {
+    expect(kind(
+      { ended_at: null, end_reason: null },
+      { started_at: 100, model_config: JSON.stringify({ _branched_from: "root" }) },
+    )).toBe("branch")
+  })
+  test("delegate and tool children of compression parents are not continuations", () => {
+    expect(kind(
+      { ended_at: 100, end_reason: "compression" },
+      { started_at: 200, model_config: JSON.stringify({ _delegate_from: "root" }) },
+    )).toBe("subagent")
+    expect(kind({ ended_at: 100, end_reason: "compression" }, { started_at: 200, source: "tool" }))
+      .toBe("subagent")
   })
   test("parent ended normally, child after → subagent (degenerate: orphaned child)", () => {
     expect(kind({ ended_at: 100, end_reason: "exit" }, { started_at: 200 })).toBe("subagent")
