@@ -59,6 +59,11 @@ const badge = (s: string): string => s
 
 const label = (r: Row) => r.title.trim() || (r.live ? "-" : "Untitled")
 const src = (r: Row): string => r.detail?.sessionSource || r.source || ""
+const fallback = (msg: string): boolean => {
+  const s = msg.trim()
+  if (/\b(?:timeout|timed out)\b/i.test(s)) return false
+  return /^(method not found|unknown method(?::|\b)|gateway not running\b|gateway exited(?:\s*\(|$))/i.test(s)
+}
 
 type View = {
   id: string
@@ -888,7 +893,7 @@ export const Sessions = memo((props: Props) => {
             toast.show({ variant: "error", message: "Can't delete the active session" })
             return false
           }
-          if (/method not found|unknown method|gateway not running|gateway exited/i.test(e.message))
+          if (fallback(e.message))
             return io.remove(r.id)
           toast.show({ variant: "error", message: e.message })
           return false

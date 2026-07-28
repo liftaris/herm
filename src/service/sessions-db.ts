@@ -543,11 +543,13 @@ export function rename(sid: string, title: string): boolean {
 export function remove(sid: string): boolean {
   const db = new Database(conn.path)
   try {
-    if (!db.query("SELECT 1 FROM sessions WHERE id = ?").get(sid)) return false
-    db.run("UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?", [sid])
-    db.run("DELETE FROM messages WHERE session_id = ?", [sid])
-    db.run("DELETE FROM sessions WHERE id = ?", [sid])
-    return true
+    return db.transaction((id: string) => {
+      if (!db.query("SELECT 1 FROM sessions WHERE id = ?").get(id)) return false
+      db.run("UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?", [id])
+      db.run("DELETE FROM messages WHERE session_id = ?", [id])
+      db.run("DELETE FROM sessions WHERE id = ?", [id])
+      return true
+    })(sid)
   } finally { db.close() }
 }
 

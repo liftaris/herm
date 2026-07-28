@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterAll } from "bun:test"
 import { openStateDb } from "./fixtures/state-db"
 import { searchSessions, queryRecentSessions, querySubagents, queryLineage } from "../src/service/hermes-home"
-import { kind, resetDb, peek, lastReal, chainTip } from "../src/service/sessions-db"
+import { kind, resetDb, peek, lastReal, chainTip, remove } from "../src/service/sessions-db"
 
 // Seeds a clean state.db and exercises the real SQL paths in
 // sessions-db.ts via the hermes-home re-exports.
@@ -67,6 +67,40 @@ const msg = (
   db.prepare("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?,?,?,?)")
     .run(sid, role, content, ts)
 }
+
+describe("remove", () => {
+  afterAll(wipe)
+
+  test("keeps parent, child, and messages when fallback deletion faults after orphaning", () => {
+    const db = seed()
+    sess(db, "root", "tui", 1700000000)
+    sess(db, "child", "tui", 1700000001, { parent_session_id: "root" })
+    msg(db, "root", "user", "parent content")
+    db.run(`CREATE TRIGGER stab_remove_fault
+      BEFORE DELETE ON messages WHEN old.session_id = 'root'
+      BEGIN SELECT RAISE(FAIL, 'fault delete message'); END`)
+    db.close()
+
+    expect(() => remove("root")).toThrow("fault delete message")
+
+    const check = openStateDb()
+    try {
+      const rows = check.query("SELECT id, parent_session_id FROM sessions ORDER BY id").all() as Array<{
+        id: string
+        parent_session_id: string | null
+      }>
+      const count = check.query("SELECT COUNT(*) AS c FROM messages WHERE session_id = 'root'").get() as { c: number }
+      expect(rows).toEqual([
+        { id: "child", parent_session_id: "root" },
+        { id: "root", parent_session_id: null },
+      ])
+      expect(count.c).toBe(1)
+    } finally {
+      check.run("DROP TRIGGER IF EXISTS stab_remove_fault")
+      check.close()
+    }
+  })
+})
 
 describe("searchSessions (gsk.12: all sources, not just tui/cli)", () => {
   beforeEach(() => {
