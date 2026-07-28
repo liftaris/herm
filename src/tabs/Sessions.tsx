@@ -563,8 +563,8 @@ export const Sessions = memo((props: Props) => {
   const [warn, setWarn] = useState("")
   const [searchErr, setSearchErr] = useState("")
   const [pending, setPending] = useState(rows.length === 0)
-  // Persisted, user-toggleable list ordering. roots() always returns
-  // newest-started; we re-sort here so the choice can flip live
+  // Persisted, user-toggleable list ordering. roots() returns the
+  // producer's active window; we re-sort here so the choice can flip live
   // without re-hitting state.db.
   const sort: Sort = prefs.usePref("sessions")?.sort ?? "active"
   const setSort = useCallback((s: Sort) => prefs.set("sessions", { sort: s }), [])

@@ -180,9 +180,14 @@ const sub = (c: string, p: string) =>
   `(NOT (${branch(c, p)}) AND NOT (${cont(c, p)}) AND (` +
   `${p}.ended_at IS NULL OR ${c}.started_at < ${p}.ended_at OR ` +
   `COALESCE(${p}.end_reason, '') NOT IN ('compression', 'branched')))`
+const top = (s: string) =>
+  `(${s}.parent_session_id IS NULL OR EXISTS (SELECT 1 FROM sessions p ` +
+  `WHERE p.id = ${s}.parent_session_id AND ${branch(s, "p")}))`
+const active = (s: string) =>
+  `COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = ${s}.id), ${s}.started_at)`
 const order = (c: string) =>
   `CASE WHEN ${c}.end_reason = 'compression' THEN 0 WHEN ${c}.ended_at IS NULL THEN 1 ELSE 2 END ASC, ` +
-  `COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = ${c}.id), ${c}.started_at) DESC, ` +
+  `${active(c)} DESC, ` +
   `${c}.started_at DESC, ${c}.id DESC`
 const next = (p: string, c = "n") =>
   `(SELECT ${c}.id FROM sessions ${c} WHERE ${c}.parent_session_id = ${p}.id AND ${cont(c, p)} ` +
@@ -287,11 +292,27 @@ export const byId = (id: string): SessionRow | null => {
  *  can have 0 messages when compaction rotated but no turn landed yet. */
 export const lastReal = (): SessionRow | undefined => {
   const hit = q(`
+    WITH RECURSIVE chain(root_id, cur_id) AS (
+      SELECT s.id, s.id FROM sessions s
+      WHERE s.source IN ('tui', 'cli') AND ${top("s")}
+      UNION ALL
+      SELECT c.root_id, child.id
+      FROM chain c
+      JOIN sessions parent ON parent.id = c.cur_id
+      JOIN sessions child ON child.parent_session_id = c.cur_id
+      WHERE ${cont("child", "parent")}
+    ), stats AS (
+      SELECT c.root_id,
+             MAX(${active("s")}) AS tick,
+             MAX(CASE WHEN s.source IN ('tui', 'cli') AND s.message_count > 0 THEN 1 ELSE 0 END) AS real
+      FROM chain c
+      JOIN sessions s ON s.id = c.cur_id
+      GROUP BY c.root_id
+    )
     SELECT s.id FROM sessions s
-    LEFT JOIN sessions p ON p.id = s.parent_session_id
-    WHERE s.source IN ('tui', 'cli') AND s.message_count > 0
-      AND (s.parent_session_id IS NULL OR ${branch("s", "p")} OR s.id = ${next("p")})
-    ORDER BY s.started_at DESC LIMIT 1
+    JOIN stats st ON st.root_id = s.id
+    WHERE st.real = 1
+    ORDER BY st.tick DESC, s.started_at DESC, s.id DESC LIMIT 1
   `)?.get() as { id: string } | undefined
   if (!hit) return undefined
   return byId(chainTip(hit.id)) ?? undefined
@@ -319,7 +340,7 @@ function walkUp(sid: string): string {
   return cur
 }
 
-/** Root-level sessions, newest-started first, compression chains
+/** Root-level sessions, newest-active first, compression chains
  *  projected to their tip (the resumable end), with lineage_root_id
  *  recording the original root when projection happened. Mirrors
  *  list_sessions_rich.
@@ -334,12 +355,25 @@ export function roots(limit = 30): SessionRow[] {
     // and continuations are hidden — they surface via children()/
     // lineage() instead. `p`/`c` aliases satisfy SUB/CONT/BR above.
     const raw = (q(
-      `SELECT ${COLS} FROM sessions s
-       WHERE s.parent_session_id IS NULL
-          OR EXISTS (SELECT 1 FROM sessions p
-                     WHERE p.id = s.parent_session_id
-                       AND ${branch("s", "p")})
-       ORDER BY s.started_at DESC
+      `WITH RECURSIVE chain(root_id, cur_id) AS (
+         SELECT s.id, s.id FROM sessions s
+         WHERE ${top("s")}
+         UNION ALL
+         SELECT c.root_id, child.id
+         FROM chain c
+         JOIN sessions parent ON parent.id = c.cur_id
+         JOIN sessions child ON child.parent_session_id = c.cur_id
+         WHERE ${cont("child", "parent")}
+       ), stats AS (
+         SELECT c.root_id, MAX(${active("s")}) AS tick
+         FROM chain c
+         JOIN sessions s ON s.id = c.cur_id
+         GROUP BY c.root_id
+       )
+       SELECT ${COLS} FROM sessions s
+       LEFT JOIN stats st ON st.root_id = s.id
+       WHERE ${top("s")}
+       ORDER BY COALESCE(st.tick, s.started_at) DESC, s.started_at DESC, s.id DESC
        LIMIT ?`,
     )?.all(limit) ?? []) as Raw[]
 

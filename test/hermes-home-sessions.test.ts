@@ -247,6 +247,32 @@ describe("queryRecentSessions (gsk.13: root-only + subagent_count + tip projecti
     expect(rows[0].last_active).toBe(1700099999)   // tip's
   })
 
+  test("orders compression chains by effective activity before limiting", () => {
+    const db = seed()
+    sess(db, "oldroot", "tui", 100, {
+      ended_at: 200,
+      end_reason: "compression",
+      title: "Old root",
+    })
+    sess(db, "oldtip", "tui", 300, {
+      parent_session_id: "oldroot",
+      title: "Active tip",
+    })
+    msg(db, "oldtip", "user", "fresh work", 999999)
+    Array.from({ length: 35 }, (_, i) => {
+      sess(db, `new${i}`, "tui", 1000 + i, { title: `New ${i}` })
+    })
+    db.close()
+
+    const rows = queryRecentSessions(30)
+    expect(rows).toHaveLength(30)
+    expect(rows[0].id).toBe("oldtip")
+    expect(rows[0].started_at).toBe(100)
+    expect(rows[0].last_active).toBe(999999)
+    expect(rows.some(r => r.id === "oldtip")).toBe(true)
+    expect(lastReal()?.id).toBe("oldtip")
+  })
+
   test("projects compression root to a continuation inserted before parent ended_at", () => {
     const db = seed()
     sess(db, "root", "tui", 1700000000,
