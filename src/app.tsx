@@ -3,7 +3,7 @@ import { Profiler, useState, useEffect, useRef, useCallback, useMemo, useReducer
 import * as perf from "./utils/perf"
 import { hasInterp, interpolate } from "./utils/interpolate"
 import { GatewayProvider, useGateway, useGatewayRestart, type Gateway } from "./context/gateway"
-import type { SessionInfo, ImageAttachResponse } from "./context/wire"
+import type { SessionInfo, ImageAttachResponse, ImageDetachResponse } from "./context/wire"
 import type { Message, Usage } from "./types/message"
 import { text as msgText } from "./types/message"
 import { CLOUD_MIN } from "./components/chat/ThoughtCloud"
@@ -212,12 +212,14 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   )
   const news = useMemo(() => readChangelog()?.headline, [])
   const [attachments, setAttachments] = useState<ImageAttachResponse[]>([])
+  const attachmentsRef = useRef<ImageAttachResponse[]>(attachments); attachmentsRef.current = attachments
   const [cloudH, setCloudH] = useState(CLOUD_MIN)
   const [pick, setPick] = useState<Message | undefined>(undefined)
   const [skin, setSkin] = useState<SkinState>(() => deriveSkin(undefined))
   const inflight = useRef(false)
   const hold = useRef(false)
   const pending = useRef(false)
+  const detaching = useRef(0)
   const [pulse, setPulse] = useState(0)
   const start = useCallback(() => {
     inflight.current = false
@@ -376,7 +378,12 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     }
     setQueue(q => [...q, t])
   }, [busy, gw, toast])
-  const onAttach = useCallback((r: ImageAttachResponse) => setAttachments(a => [...a, r]), [])
+  const updateAttachments = useCallback((next: ImageAttachResponse[] | ((prev: ImageAttachResponse[]) => ImageAttachResponse[])) => {
+    const value = typeof next === "function" ? next(attachmentsRef.current) : next
+    attachmentsRef.current = value
+    setAttachments(value)
+  }, [])
+  const onAttach = useCallback((r: ImageAttachResponse) => updateAttachments(a => [...a, r]), [updateAttachments])
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
@@ -415,8 +422,8 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     setStarting(false)
     setStatus("")
     setTitle("")
-    setAttachments([])
-  }, [toast])
+    updateAttachments([])
+  }, [toast, updateAttachments])
 
   const newSession = useCallback(async () => {
     if (creating.current) return
@@ -587,14 +594,14 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const msgMenu = messageActions.menu
   // Gateway owns the canonical list (session["attached_images"]); chips
   // are a client-side mirror. prompt.submit drains server-side, so clear
-  // here too. No image.detach RPC yet — chips are display-only.
+  // here too.
   const attachClipboard = useCallback(() => {
     gw.request<ImageAttachResponse>("clipboard.paste")
       .then(r => r.attached
-        ? setAttachments(a => [...a, r])
+        ? updateAttachments(a => [...a, r])
         : toast.show({ variant: "info", message: r.message ?? "No image in clipboard" }))
       .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
-  }, [gw, toast])
+  }, [gw, toast, updateAttachments])
   // `slash` and `send` reference each other (skill/alias dispatch needs
   // to submit a turn; typed `/cmd` in send() resolves via slash). The
   // cycle is broken with a forward ref — same shape as upstream Ink's
@@ -603,7 +610,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const slash = useSlash({
     dispatch, session, turnRef, queueRef, sendRef, composer, summoned, undone,
     capabilities, info, sid, title: caption, skin,
-    setQueue, setFocusRegion, setSplash, setAttachments, setInfo, setUsage, setTitle,
+    setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo, setUsage, setTitle,
     newSession, switchSession, activateSession, rewind, goTo, attachClipboard, voiceToggle: voice.toggle,
   })
   const send = useCallback(async (raw: string) => {
@@ -612,6 +619,11 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     // reflex `exit⏎` works without the leading slash.
     if (["exit", "quit", ":q", ":q!", ":wq"].includes(raw.trim()))
       return quit(renderer, sidRef.current, titleRef.current, gw)
+    if (detaching.current > 0) {
+      if (raw.trim()) composer.current?.set(raw)
+      setStatus("detaching image…")
+      return
+    }
     // Slash-shaped input resolves against the merged catalog: exact
     // name/alias wins, else unique prefix. This covers the "typed with
     // arg" path the popover can't — e.g. `/mod gpt-4`, `/q follow-up`.
@@ -649,8 +661,9 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     // and so the persisted user row doesn't drag the analysis block
     // into view on resume. Parity with Ink: live preview is ours, the
     // resume view falls back to whatever upstream persisted.
-    const withMedia = attachments.length
-      ? [...attachments.flatMap(a => a.path ? [`MEDIA:${a.path}`] : []), text].filter(Boolean).join("\n")
+    const att = attachmentsRef.current
+    const withMedia = att.length
+      ? [...att.flatMap(a => a.path ? [`MEDIA:${a.path}`] : []), text].filter(Boolean).join("\n")
       : text
     if (pending.current) {
       setQueue(q => [...q, raw])
@@ -666,7 +679,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
           setStarting(true)
           setStatus("starting agent…")
         }
-        setAttachments([])
+        updateAttachments([])
         undone.current = []
         setTab(CHAT_TAB)
       })
@@ -692,7 +705,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
         dispatch({ kind: "system", text: `submit failed: ${msg}` })
         toast.show({ variant: "error", message: msg })
       })
-  }, [gw, slash, attachments, toast])
+  }, [gw, slash, toast, updateAttachments])
   sendRef.current = send
 
   // Shell mode submit — `shell.exec` is a plain subprocess (no pty,
@@ -828,12 +841,21 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     },
     onCopyToast: toast.show,
     onAttachClipboard: attachClipboard,
-    // Client-side drop only. Gateway's session["attached_images"] still
-    // has the orphaned path until the next prompt.submit drains it, or
-    // session reset clears it — the side channel is write-only from here.
     onDetachLast: () => {
-      if (attachments.length === 0) return false
-      setAttachments(a => a.slice(0, -1))
+      if (detaching.current > 0) { setStatus("detaching image…"); return true }
+      const target = attachmentsRef.current.at(-1)
+      if (!target?.path) return false
+      detaching.current += 1
+      setStatus("detaching image…")
+      setPulse(n => n + 1)
+      gw.request<ImageDetachResponse>("image.detach", { path: target.path })
+        .then(() => updateAttachments(a => a.filter(x => x.path !== target.path)))
+        .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+        .finally(() => {
+          detaching.current = Math.max(0, detaching.current - 1)
+          setStatus("")
+          setPulse(n => n + 1)
+        })
       return true
     },
     onNotice: (text) => dispatch({ kind: "system", text }),
@@ -948,7 +970,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
               <VoiceIndicator voice={voice.state} keyLabel={voice.keyLabel} />
               <Composer
                 ref={composer}
-                focused={inputFocused} canSubmitPrompt={capabilities.canSubmitPrompt} ready={ready} streaming={active || pending.current}
+                focused={inputFocused} canSubmitPrompt={capabilities.canSubmitPrompt && detaching.current === 0} ready={ready} streaming={active || pending.current}
                 starting={starting}
                 status={status}
                 model={info?.model}
