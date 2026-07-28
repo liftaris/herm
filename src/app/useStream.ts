@@ -51,7 +51,7 @@ type Ctx = {
 // is orthogonal to the stream and passes the interrupt gate.
 const STREAM_EVENTS = new Set<GatewayEvent["type"]>([
   "message.start",
-  "message.delta", "reasoning.delta", "reasoning.available", "thinking.delta",
+  "message.delta", "message.interim", "reasoning.delta", "reasoning.available", "thinking.delta",
   "moa.reference", "moa.aggregating",
   "tool.start", "tool.progress", "tool.generating",
 ])

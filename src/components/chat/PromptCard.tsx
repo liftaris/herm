@@ -372,7 +372,8 @@ function question(part: PromptPart): string {
   if (part.req.variant === "clarify") return part.req.question
   if (part.req.variant === "approval") return mkApproval(part.req).question
   if (part.req.variant === "sudo") return "Sudo required"
-  return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
+  if (part.req.variant === "secret") return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
+  return "Terminal read required"
 }
 
 function outcome(part: PromptPart): { head: string; body?: string } {
@@ -387,9 +388,55 @@ function outcome(part: PromptPart): { head: string; body?: string } {
     return { head: a.label, body: q }
   }
   if (part.variant === "sudo") return { head: `sudo ${a.label}` }
+  if (part.variant === "terminal-read") return { head: `terminal read ${a.label}` }
   const req = part.req as Extract<PromptReq, { variant: "secret" }>
   return { head: `${req.env_var ?? "secret"} ${a.label}` }
 }
+
+const TerminalRead = forwardRef<PromptCardHandle, {
+  req: Extract<PromptReq, { variant: "terminal-read" }>
+  onAnswer: Answer
+}>((p, ref) => {
+  const theme = useTheme().theme
+  const gw = useGateway()
+  const [err, setErr] = useState("")
+  const done = useRef(false)
+  const range = typeof p.req.start === "number" || typeof p.req.count === "number"
+    ? `requested range: ${p.req.start ?? "current"}:${p.req.count ?? "all"}`
+    : "requested current terminal output"
+
+  const send = () => {
+    if (done.current) return
+    done.current = true
+    setErr("")
+    void gw.request("terminal.read.respond", { request_id: p.req.request_id, text: "" })
+      .then(() => p.onAnswer("(unavailable)", false))
+      .catch((e: Error) => {
+        done.current = false
+        setErr(e.message)
+      })
+  }
+
+  useImperativeHandle(ref, () => ({
+    masked: false,
+    feed: (key) => {
+      if (key.name === "return" || key.name === "escape") { send(); return true }
+      return false
+    },
+  }), [])
+
+  return (
+    <Frame tint={theme.warning}>
+      <box flexDirection="column" paddingLeft={1} paddingRight={2} paddingY={1}>
+        <text fg={theme.warning}><strong>Terminal read required</strong></text>
+        <text fg={theme.textMuted}>{range}</text>
+        <text fg={theme.text} wrapMode="word">No embedded terminal buffer is available in Herm.</text>
+        {err ? <text fg={theme.error}>{err}</text> : null}
+        <text fg={theme.textMuted}>Enter/Esc returns empty</text>
+      </box>
+    </Frame>
+  )
+})
 
 const Outcome = memo(({ part }: { part: PromptPart }) => {
   const theme = useTheme().theme
@@ -428,6 +475,8 @@ export const PromptCard = memo(forwardRef<PromptCardHandle, {
                    onSubmit={v => gw.request("sudo.respond",
                      { request_id: req.request_id, password: v })}
                    onAnswer={answer} />
+  if (req.variant === "terminal-read")
+    return <TerminalRead ref={ref} req={req} onAnswer={answer} />
   return <Masked ref={ref} title={`🔑 Secret: ${req.env_var}`}
                  note={req.prompt}
                  onSubmit={v => gw.request("secret.respond",

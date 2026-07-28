@@ -51,6 +51,36 @@ describe("turnReducer", () => {
     expect(parts[1]).toMatchObject({ content: "The answer is Paris.", streaming: false })
   })
 
+  test("interim text seals a distinct chronological segment", () => {
+    const s = run([
+      { kind: "message.start" },
+      { kind: "message.interim", text: "INTERIM_TEXT_SENTINEL" },
+      { kind: "tool.start", id: "t1", name: "read_file" },
+      { kind: "tool.complete", id: "t1", summary: "ok" },
+      { kind: "message.delta", chunk: "FINAL_TEXT_SENTINEL" },
+      { kind: "message.complete", text: "FINAL_TEXT_SENTINEL" },
+    ])
+    const parts = last(s).parts
+    expect(kinds(parts)).toEqual(["text", "tool", "text"])
+    expect(parts[0]).toMatchObject({ content: "INTERIM_TEXT_SENTINEL", streaming: false })
+    expect(parts[2]).toMatchObject({ content: "FINAL_TEXT_SENTINEL", streaming: false })
+  })
+
+  test("already-streamed interim seals open text without duplicating it", () => {
+    const s = run([
+      { kind: "message.start" },
+      { kind: "message.delta", chunk: "STREAMED_INTERIM_SENTINEL" },
+      { kind: "message.interim", text: "STREAMED_INTERIM_SENTINEL", streamed: true },
+      { kind: "tool.start", id: "t1", name: "terminal" },
+      { kind: "message.delta", chunk: "FINAL_AFTER_TOOL_SENTINEL" },
+      { kind: "message.complete", text: "FINAL_AFTER_TOOL_SENTINEL" },
+    ])
+    const parts = last(s).parts
+    expect(kinds(parts)).toEqual(["text", "tool", "text"])
+    expect(parts.filter(p => p.type === "text" && p.content === "STREAMED_INTERIM_SENTINEL")).toHaveLength(1)
+    expect(parts[0]).toMatchObject({ streaming: false })
+  })
+
   test("complete seals trailing stream and attaches usage", () => {
     const usage = { input: 10, output: 5, total: 15 }
     const s = run([

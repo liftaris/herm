@@ -27,7 +27,8 @@ export type GatewayEvent = ({
   | { type: "skin.changed"; payload?: GatewaySkin }
   | { type: "message.start"; payload?: undefined }
   | { type: "message.delta"; payload?: { text?: string; rendered?: string } }
-  | { type: "message.complete"; payload?: { text?: string | null; rendered?: string; reasoning?: string; status?: "complete" | "error" | "interrupted"; usage?: Usage } }
+  | { type: "message.interim"; payload?: { text?: string | null; already_streamed?: boolean } }
+  | { type: "message.complete"; payload?: { text?: string | null; rendered?: string; reasoning?: string; warning?: string; status?: "complete" | "error" | "interrupted"; usage?: Usage } }
   | { type: "thinking.delta"; payload?: { text?: string } }
   | { type: "reasoning.delta"; payload?: { text?: string; verbose?: boolean } }
   | { type: "reasoning.available"; payload?: { text?: string; verbose?: boolean } }
@@ -43,7 +44,8 @@ export type GatewayEvent = ({
   | { type: "clarify.request"; payload: { request_id: string; question: string; choices: string[] | null } }
   | { type: "approval.request"; payload: { command: string; description: string; pattern_keys?: string[] } }
   | { type: "sudo.request"; payload: { request_id: string } }
-  | { type: "secret.request"; payload: { request_id: string; prompt: string; env_var: string } }
+  | { type: "secret.request"; payload: { request_id: string; prompt: string; env_var: string; metadata?: unknown } }
+  | { type: "terminal.read.request"; payload: { request_id: string; start?: number; count?: number } }
   | { type: "background.complete"; payload: { task_id: string; text: string } }
   | { type: "review.summary"; payload?: { text?: string } }
   | { type: "btw.complete"; payload: { text: string } }

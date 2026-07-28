@@ -5,6 +5,25 @@ import type { GatewayEvent } from "../src/context/wire"
 
 describe("prompts", () => {
 
+  async function expires(ev: GatewayEvent, visible: string, closed: string, method: string) {
+    const t = await mount()
+    await until(t, () => t.frame().includes("Ready"))
+    act(() => t.gw.push({ type: "message.start" }))
+    act(() => t.gw.push(ev))
+    await until(t, () => t.frame().includes(visible))
+
+    act(() => t.gw.push({
+      type: "message.complete",
+      payload: { text: "PROMPT_EXPIRED_DONE_SENTINEL", usage: { input: 0, output: 0, total: 0 } },
+    }))
+    await until(t, () => t.frame().includes("Timed out") && !t.frame().includes(closed))
+
+    act(() => t.keys.pressKey("1"))
+    await t.settle()
+    expect(t.gw.last(method)).toBeUndefined()
+    t.destroy()
+  }
+
   test("clarify: open-ended (no choices) free-text input", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
@@ -116,6 +135,31 @@ describe("prompts", () => {
     await until(t, () => !t.frame().includes("Secret: TOKEN"))
     expect(gw.calls.filter(c => c.method === "secret.respond")).toHaveLength(2)
     t.destroy()
+  })
+
+  test("clarify prompt expires on message.complete and cannot answer later", async () => {
+    await expires({
+      type: "clarify.request",
+      payload: { request_id: "clarify-exp", question: "EXPIRING_CLARIFY_SENTINEL", choices: ["yes"] },
+    }, "EXPIRING_CLARIFY_SENTINEL", "Other (type your answer)", "clarify.respond")
+  })
+
+  test("sudo prompt expires on message.complete and cannot answer later", async () => {
+    await expires({ type: "sudo.request", payload: { request_id: "sudo-exp" } }, "Sudo required", "Enter your password", "sudo.respond")
+  })
+
+  test("secret prompt expires on message.complete and cannot answer later", async () => {
+    await expires({
+      type: "secret.request",
+      payload: { request_id: "secret-exp", prompt: "SECRET_PROMPT_SHOULD_DISAPPEAR", env_var: "EXPIRING_TOKEN" },
+    }, "Secret: EXPIRING_TOKEN", "SECRET_PROMPT_SHOULD_DISAPPEAR", "secret.respond")
+  })
+
+  test("terminal-read prompt expires on message.complete and cannot answer later", async () => {
+    await expires({
+      type: "terminal.read.request",
+      payload: { request_id: "term-exp", start: 10, count: 20 },
+    }, "Terminal read required", "Enter/Esc returns empty", "terminal.read.respond")
   })
 })
 

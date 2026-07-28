@@ -31,6 +31,7 @@ export type Action =
   | { kind: "background"; id: string; title?: string; text: string }
   | { kind: "message.start" }
   | { kind: "message.delta"; chunk: string }
+  | { kind: "message.interim"; text?: string; streamed?: boolean }
   | { kind: "message.complete"; text?: string; usage?: Usage }
   | { kind: "reference"; text: string }
   | { kind: "tool.start"; id: string; name: string; preview?: string; args?: string }
@@ -83,6 +84,19 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
         hasContent: true,
         toolActive: false,
         messages: appendText(state.messages, chunk),
+      }
+    }
+
+    case "message.interim": {
+      const text = sanitize(a.text)
+      if (!text && !a.streamed) return state
+      return {
+        ...state,
+        hasContent: text ? true : state.hasContent,
+        toolActive: false,
+        messages: a.streamed
+          ? sealLastText(state.messages)
+          : appendPart(state.messages, { type: "text", key: pid(), content: text, streaming: false }, true),
       }
     }
 
@@ -328,6 +342,12 @@ function appendPart(messages: Message[], part: Part, close: boolean): Message[] 
   )
 }
 
+function sealLastText(messages: Message[]): Message[] {
+  const last = messages[messages.length - 1]
+  if (last?.role !== "assistant") return messages
+  return [...messages.slice(0, -1), { ...last, parts: seal(last.parts) }]
+}
+
 function finalize(messages: Message[], final?: string, usage?: Usage): Message[] {
   const last = messages[messages.length - 1]
   if (last?.role === "assistant") {
@@ -407,7 +427,8 @@ function promptQuestion(req: PromptReq): string | undefined {
   if (req.variant === "clarify") return req.question
   if (req.variant === "approval") return req.description || "Shell command"
   if (req.variant === "sudo") return "Sudo required"
-  return req.env_var ? `Secret: ${req.env_var}` : "Secret required"
+  if (req.variant === "secret") return req.env_var ? `Secret: ${req.env_var}` : "Secret required"
+  return "Terminal read required"
 }
 
 function upsertThinking(messages: Message[], text: string, final: boolean, verbose?: boolean): Message[] {

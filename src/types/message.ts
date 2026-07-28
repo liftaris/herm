@@ -45,7 +45,7 @@ export type ThinkingPart = {
 export type PromptPart = {
   type: "prompt"
   id: string
-  variant: "approval" | "clarify" | "sudo" | "secret"
+  variant: "approval" | "clarify" | "sudo" | "secret" | "terminal-read"
   req: PromptReq
   answered?: { label: string; ok: boolean; at: number; question?: string }
 }
@@ -55,6 +55,7 @@ export type PromptReq =
   | { variant: "clarify"; request_id: string; question: string; choices: string[] | null }
   | { variant: "sudo"; request_id: string }
   | { variant: "secret"; request_id: string; prompt: string; env_var: string }
+  | { variant: "terminal-read"; request_id: string; start?: number; count?: number }
 
 export type Part = TextPart | ToolPart | ThinkingPart | PromptPart
 

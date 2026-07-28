@@ -1517,6 +1517,7 @@ describe("app", () => {
     // In-pipe stale deltas + a late tool.start arrive after the latch.
     act(() => {
       t.gw.push({ type: "message.delta", payload: { text: "STALE-DELTA " } })
+      t.gw.push({ type: "message.interim", payload: { text: "STALE-INTERIM" } })
       t.gw.push({ type: "tool.start", payload: { tool_id: "x", name: "zz_stale_tool", context: "STALE-TOOL" } })
       t.gw.push({ type: "reasoning.delta", payload: { text: "STALE-THINK" } })
       t.gw.push({ type: "message.complete", payload: { text: "alpha ", status: "interrupted", usage: { input: 1, output: 1, total: 2 } } })
@@ -1532,6 +1533,7 @@ describe("app", () => {
 
     const f = t.frame()
     expect(f).not.toContain("STALE-DELTA")
+    expect(f).not.toContain("STALE-INTERIM")
     expect(f).not.toContain("STALE-TOOL")
     expect(f).not.toContain("STALE-THINK")
     expect(f).not.toContain("zz_stale_tool")   // tool part never created

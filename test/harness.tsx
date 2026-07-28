@@ -61,6 +61,7 @@ const preset: Record<string, Handler> = {
   "clarify.respond": () => ({ accepted: true }),
   "secret.respond": () => ({ accepted: true }),
   "sudo.respond": () => ({ accepted: true }),
+  "terminal.read.respond": () => ({ accepted: true }),
   "cron.manage": () => ({ jobs: [] }),
   "toolsets.list": () => ({ toolsets: [] }),
   "tools.configure": () => ({ changed: [], enabled_toolsets: [], unknown: [] }),

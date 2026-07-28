@@ -56,6 +56,15 @@ describe("mapEvent", () => {
       .toEqual({ kind: "message.delta", chunk: "x" })
   })
 
+  test("message.interim maps to a non-completing assistant segment action", () => {
+    expect(map({ type: "message.interim", payload: { text: "INTERIM_SEGMENT_SENTINEL" } }).action)
+      .toEqual({ kind: "message.interim", text: "INTERIM_SEGMENT_SENTINEL", streamed: undefined })
+    expect(map({ type: "message.interim", payload: { text: "INTERIM_SEGMENT_SENTINEL", already_streamed: true } }).action)
+      .toEqual({ kind: "message.interim", text: "INTERIM_SEGMENT_SENTINEL", streamed: true })
+    const r = map({ type: "message.interim", payload: { text: "INTERIM_SEGMENT_SENTINEL" } })
+    expect(r.calls.done).toBeUndefined()
+  })
+
   test("message.complete normal", () => {
     const u = { input: 1, output: 2, total: 3 }
     const r = map({ type: "message.complete", payload: { text: "hi", usage: u } })
@@ -227,6 +236,8 @@ describe("mapEvent", () => {
       .toEqual({ kind: "prompt", id: "s", req: { variant: "sudo", request_id: "s" } })
     expect(map({ type: "secret.request", payload: { request_id: "k", prompt: "p", env_var: "API_KEY" } }).action)
       .toEqual({ kind: "prompt", id: "k", req: { variant: "secret", request_id: "k", prompt: "p", env_var: "API_KEY" } })
+    expect(map({ type: "terminal.read.request", payload: { request_id: "term", start: 4, count: 12 } }).action)
+      .toEqual({ kind: "prompt", id: "term", req: { variant: "terminal-read", request_id: "term", start: 4, count: 12 } })
   })
 
   test("review.summary → persistent system line (trimmed)", () => {
