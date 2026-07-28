@@ -22,6 +22,7 @@ import { warmup as warmTokens } from "./utils/tokens";
 import { prime as primeTheme, DEFAULT_THEME } from "./theme";
 import { resolveProfileHome } from "./service/hermes-profiles";
 import { rehome } from "./home/rehome";
+import { fatal } from "./app/fatal";
 
 // Static ESM imports hoist above module-level code, so the only
 // honest import-graph measurement is process-uptime at the point
@@ -124,6 +125,6 @@ const main = async () => {
   control.start()
 };
 
-main().catch(console.error);
+main().catch(fatal);
 
 export {};
