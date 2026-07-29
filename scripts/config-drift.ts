@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { RULES } from "../src/config/rules"
 import { RPC_ALIAS, route } from "../src/config/lane"
 import { MERGE, SELECTS } from "../src/config/semantics"
-import { findRoot, generate, remote, schemaTarget, type Entry } from "./schema-source"
+import { findRoot, generate, remote, schemaTarget, write as writeSchema, type Entry } from "./schema-source"
 
 type Base = {
   SCHEMA: Record<string, Entry>
@@ -20,7 +20,7 @@ type Source = {
   remote_url: string
   reproducible: boolean
   schema_source_sha?: string
-  workflow_shas?: string[]
+  contract_sha?: string
   ref?: string
   resolved_sha?: string
 }
@@ -74,11 +74,12 @@ const shaOf = (path: string) => {
   return m?.[1] ?? "unknown"
 }
 
-const workflows = () => sort(["ci.yml", "release.yml"].flatMap(file => {
-  const path = join(import.meta.dir, "..", ".github", "workflows", file)
-  if (!existsSync(path)) return []
-  return [...readFileSync(path, "utf8").matchAll(/fetch --depth=1 origin ([0-9a-f]{40})/g)].map(m => m[1])
-})).filter((v, i, xs) => xs.indexOf(v) === i)
+const contract = () => {
+  const path = join(import.meta.dir, "..", "hermes.contract.json")
+  if (!existsSync(path)) return undefined
+  const cfg = JSON.parse(readFileSync(path, "utf8")) as { pinned?: unknown }
+  return typeof cfg.pinned === "string" ? cfg.pinned : undefined
+}
 
 const fields = (a: Entry, b: Entry) => ["type", "default", "doc", "group", "effect"]
   .filter(k => !same(a[k as keyof Entry], b[k as keyof Entry]))
@@ -189,7 +190,7 @@ function makeReport(base: Base, pinned: ReturnType<typeof generate>, current?: R
     generated_at: stamp(),
     tool: { name: "herm-config-drift", herm_sha: hermSha() },
     sources: {
-      pinned: { kind: "pinned", root: pinned.root, sha: pinned.sha, remote_url: remote(pinned.root), schema_source_sha: shaOf(baseline), workflow_shas: workflows(), reproducible: true } satisfies Source,
+      pinned: { kind: "pinned", root: pinned.root, sha: pinned.sha, remote_url: remote(pinned.root), schema_source_sha: shaOf(baseline), contract_sha: contract(), reproducible: true } satisfies Source,
       ...(current ? { current_upstream: { kind: "current_upstream", root: current.root, remote_url: remote(current.root), ref: arg("--current-ref") ?? "refs/heads/main", sha: current.sha, resolved_sha: current.sha, reproducible: false } satisfies Source } : {}),
     },
     summary: {
@@ -229,6 +230,8 @@ try {
   const pinned = generate(findRoot(arg("--pinned-root")))
   const cur = arg("--current-root")
   const current = cur ? generate(findRoot(cur)) : undefined
+  const currentOut = arg("--current-schema-out")
+  if (current && currentOut) writeSchema(resolve(currentOut), current.body)
   const out = makeReport(base, pinned, current, baseline)
   if (has("--json")) console.log(JSON.stringify(out, null, 2))
   else console.log(human(out))

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -59,10 +59,12 @@ describe("current Hermes canary", () => {
     base(f.agent, file)
 
     try {
-      const proc = await run(["--root", f.agent, "--base", file, "--report", report])
+      const proc = await run(["--root", f.agent, "--pinned-root", f.agent, "--base", file, "--report", report])
       expect(proc.code).toBe(0)
       const data = await Bun.file(join(report, "summary.json")).json()
       expect(data.phase).toBe("compat_pass")
+      const drift = await Bun.file(join(report, "config-drift.json")).json()
+      expect(drift.summary.current_upstream.status).toBe("clean")
       expect(await Bun.file(join(report, "schema.diff")).text()).toBe("")
       expect(await Bun.file(file).text()).not.toContain("schema_drift")
     } finally {
@@ -74,14 +76,18 @@ describe("current Hermes canary", () => {
     const f = fixture()
     const file = join(f.dir, "base.ts")
     const report = join(f.dir, "report")
+    const pinned = join(f.dir, "pinned")
     base(f.agent, file)
+    cpSync(f.agent, pinned, { recursive: true })
     writeAgent(f.agent, 120)
 
     try {
-      const proc = await run(["--root", f.agent, "--base", file, "--report", report])
+      const proc = await run(["--root", f.agent, "--pinned-root", pinned, "--base", file, "--report", report])
       expect(proc.code).toBe(1)
       const data = await Bun.file(join(report, "summary.json")).json()
       expect(data.phase).toBe("schema_drift")
+      const drift = await Bun.file(join(report, "config-drift.json")).json()
+      expect(drift.summary.current_upstream.status).toBe("drift")
       expect(await Bun.file(join(report, "schema.diff")).text()).toContain("max_turns")
     } finally {
       rmSync(f.dir, { recursive: true, force: true })
@@ -95,13 +101,33 @@ describe("current Hermes canary", () => {
     mkdirSync(agent, { recursive: true })
 
     try {
-      const proc = await run(["--root", agent, "--report", report])
+      const proc = await run(["--root", agent, "--pinned-root", agent, "--report", report])
       expect(proc.code).toBe(1)
       const data = await Bun.file(join(report, "summary.json")).json()
       expect(data.phase).toBe("generator_failed")
-      expect(await Bun.file(join(report, "gen-schema.stderr")).text()).toContain("could not locate")
+      expect(await Bun.file(join(report, "config-drift.stderr")).text()).toContain("could not locate")
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("classifies semantic reporter failures instead of publishing a raw pass", async () => {
+    const f = fixture()
+    const file = join(f.dir, "base.ts")
+    const report = join(f.dir, "report")
+    const pinned = join(f.dir, "missing-pin")
+    base(f.agent, file)
+    mkdirSync(pinned, { recursive: true })
+
+    try {
+      const proc = await run(["--root", f.agent, "--pinned-root", pinned, "--base", file, "--report", report])
+      expect(proc.code).toBe(1)
+      const data = await Bun.file(join(report, "summary.json")).json()
+      expect(data.phase).toBe("generator_failed")
+      expect(data.config_drift_exit_code).toBe(1)
+      expect(await Bun.file(join(report, "config-drift.stderr")).text()).toContain("could not locate")
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
     }
   })
 })

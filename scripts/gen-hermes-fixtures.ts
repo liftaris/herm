@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
-import { homedir, tmpdir } from "node:os"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
+import { gitSha, type Entry } from "./schema-source"
+import { find } from "./hermes-source"
 
 const arg = (name: string) => {
   const pos = Bun.argv.indexOf(name)
@@ -14,170 +16,51 @@ if (!root) {
   process.exit(2)
 }
 
-const agent = resolve(root)
-const config = join(agent, "hermes_cli", "config.py")
-const server = join(agent, "tui_gateway", "server.py")
-const entry = join(agent, "tui_gateway", "entry.py")
-const ws = join(agent, "tui_gateway", "ws.py")
-for (const file of [config, server, entry, ws]) {
-  if (!existsSync(file)) {
-    console.error(`gen-hermes-fixtures: missing ${file}`)
-    process.exit(2)
+const agent = find(root)
+const target = resolve(arg("--out") || join(import.meta.dir, "..", "test", "fixtures", "hermes"))
+const source = resolve(arg("--manifest") || join(import.meta.dir, "..", "src", "compat", "hermes-manifest.ts"))
+const schemaSource = resolve(arg("--schema") || join(import.meta.dir, "..", "src", "config", "schema.ts"))
+const mod = await import(`${pathToFileURL(source).href}?t=${Date.now()}`) as {
+  HERMES_MANIFEST?: {
+    provenance: { sourceRevision: string }
+    gateway: { events: { names: readonly string[] } }
+    session: { keys: readonly string[]; desktopContract: number }
   }
 }
-
-const real = join(homedir(), ".hermes")
-if (process.env.HERMES_HOME === real) {
-  console.error("gen-hermes-fixtures: refusing real HERMES_HOME; use a disposable HERMES_HOME")
+const schema = await import(`${pathToFileURL(schemaSource).href}?t=${Date.now()}`) as {
+  SCHEMA_SOURCE_REVISION?: string
+  SCHEMA?: Record<string, Entry>
+  APPROVAL_MODES?: readonly string[]
+}
+const manifest = mod.HERMES_MANIFEST
+if (!manifest) {
+  console.error(`gen-hermes-fixtures: ${source} must export HERMES_MANIFEST`)
   process.exit(2)
 }
-
-const tmp = join(tmpdir(), `herm-fixtures-${process.pid}`)
-mkdirSync(tmp, { recursive: true })
-process.env.HOME = join(tmp, "home")
-process.env.HERMES_HOME = join(tmp, "hermes")
-process.env.HERM_CONFIG_DIR = join(tmp, "config")
-process.env.HERMES_CWD = join(tmp, "cwd")
-process.env.TERMINAL_CWD = join(tmp, "cwd")
-delete process.env.HERM_GATEWAY_URL
-delete process.env.HERMES_TUI_GATEWAY_URL
-mkdirSync(process.env.HOME, { recursive: true })
-mkdirSync(process.env.HERMES_HOME, { recursive: true })
-mkdirSync(process.env.HERM_CONFIG_DIR, { recursive: true })
-mkdirSync(process.env.HERMES_CWD, { recursive: true })
-
-const sha = (() => {
-  if (process.env.HERMES_AGENT_SHA) return process.env.HERMES_AGENT_SHA
-  const proc = Bun.spawnSync(["git", "-C", agent, "rev-parse", "HEAD"])
-  if (proc.exitCode === 0) return new TextDecoder().decode(proc.stdout).trim()
-  return "unknown"
-})()
-
+const revision = gitSha(agent)
+if (!schema.SCHEMA || !schema.APPROVAL_MODES || !schema.SCHEMA_SOURCE_REVISION) {
+  console.error(`gen-hermes-fixtures: ${schemaSource} must export schema provenance and values`)
+  process.exit(2)
+}
+if (revision !== manifest.provenance.sourceRevision || revision !== schema.SCHEMA_SOURCE_REVISION) {
+  console.error(`gen-hermes-fixtures: producer ${revision}, manifest ${manifest.provenance.sourceRevision}, and schema ${schema.SCHEMA_SOURCE_REVISION} must match`)
+  process.exit(1)
+}
 const cmd = "bun scripts/gen-hermes-fixtures.ts --agent-root <producer-root>"
-const target = resolve(arg("--out") || join(import.meta.dir, "..", "test", "fixtures", "hermes"))
-const meta = (kind: string) => ({
+const meta = (kind: string, files: string[]) => ({
   generated_by: "scripts/gen-hermes-fixtures.ts",
   generation_command: cmd,
-  source_revision: sha,
-  source_files: [
-    "hermes_cli/config.py",
-    "tui_gateway/server.py",
-    "tui_gateway/entry.py",
-    "tui_gateway/ws.py",
-  ],
+  source_revision: revision,
+  source_files: files.sort(),
+  producer_manifest: "src/compat/hermes-manifest.ts",
   kind,
 })
 
-const py = `
-import ast, json, re, sys
-config_path, server_path = sys.argv[1], sys.argv[2]
-config = open(config_path, encoding="utf-8").read()
-server = open(server_path, encoding="utf-8").read()
-lines = config.splitlines()
-start = next((i for i, line in enumerate(lines) if re.match(r"^DEFAULT_CONFIG\\s*=\\s*{", line)), None)
-if start is None:
-    raise RuntimeError("could not find DEFAULT_CONFIG")
-depth, end = 0, start
-for i in range(start, len(lines)):
-    depth += lines[i].count("{") - lines[i].count("}")
-    if depth == 0:
-        end = i
-        break
-block = "\\n".join(lines[start:end + 1]).split("=", 1)[1].strip()
-import operator
-BIN = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-       ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
-       ast.Mod: operator.mod, ast.Pow: operator.pow}
-UNA = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-def ev(n):
-    if isinstance(n, ast.Constant): return n.value
-    if isinstance(n, ast.Dict): return {ev(k): ev(v) for k, v in zip(n.keys, n.values)}
-    if isinstance(n, (ast.List, ast.Tuple)): return [ev(e) for e in n.elts]
-    if isinstance(n, ast.Set): return sorted(ev(e) for e in n.elts)
-    if isinstance(n, ast.BinOp) and type(n.op) in BIN: return BIN[type(n.op)](ev(n.left), ev(n.right))
-    if isinstance(n, ast.UnaryOp) and type(n.op) in UNA: return UNA[type(n.op)](ev(n.operand))
-    if isinstance(n, ast.Name) and n.id in ("True", "False", "None"):
-        return {"True": True, "False": False, "None": None}[n.id]
-    raise ValueError(f"unsupported node: {ast.dump(n)[:80]}")
-def keys(node):
-    out = []
-    if isinstance(node, ast.Dict):
-        for key in node.keys:
-            if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                out.append(key.value)
-    return out
-tree = ast.parse(server)
-fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_session_info"), None)
-if fn is None:
-    raise RuntimeError("could not find _session_info")
-seen = []
-class Visitor(ast.NodeVisitor):
-    def add(self, key):
-        if isinstance(key, str) and key not in seen:
-            seen.append(key)
-    def visit_Assign(self, node):
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "info":
-                for key in keys(node.value): self.add(key)
-            if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "info":
-                sl = target.slice
-                if isinstance(sl, ast.Constant): self.add(sl.value)
-        self.generic_visit(node)
-    def visit_AnnAssign(self, node):
-        target = node.target
-        if isinstance(target, ast.Name) and target.id == "info":
-            for key in keys(node.value): self.add(key)
-        self.generic_visit(node)
-Visitor().visit(fn)
-approval = re.search(r"^_APPROVAL_MODES\\s*=\\s*frozenset\\((\\{.*?\\})\\)", server, re.M | re.S)
-if not approval:
-    raise RuntimeError("could not find _APPROVAL_MODES")
-contract = re.search(r"^DESKTOP_BACKEND_CONTRACT\\s*=\\s*(\\d+)", server, re.M)
-if not contract:
-    raise RuntimeError("could not find DESKTOP_BACKEND_CONTRACT")
-if '"jsonrpc": "2.0"' not in server or '"method": "event"' not in server or 'def _event_frame' not in server:
-    raise RuntimeError("could not verify _event_frame envelope")
-json.dump({
-    "config": ev(ast.parse(block, mode="eval").body),
-    "approval_modes": re.findall(r'"([^"]+)"', approval.group(1)),
-    "session_keys": seen,
-    "desktop_contract": int(contract.group(1)),
-}, sys.stdout, sort_keys=True)
-`
-
-const proc = Bun.spawnSync(["python3", "-c", py, config, server])
-if (proc.exitCode !== 0) {
-  console.error("gen-hermes-fixtures: python extraction failed")
-  console.error(new TextDecoder().decode(proc.stderr))
-  rmSync(tmp, { recursive: true, force: true })
-  process.exit(1)
-}
-
-const data = JSON.parse(new TextDecoder().decode(proc.stdout)) as {
-  config: Record<string, unknown>
-  approval_modes: string[]
-  session_keys: string[]
-  desktop_contract: number
-}
-
-const entrySrc = readFileSync(entry, "utf8")
-const wsSrc = readFileSync(ws, "utf8")
-if (!entrySrc.includes('"type": "gateway.ready"') || !entrySrc.includes('"payload": {"skin": resolve_skin()}')) {
-  console.error("gen-hermes-fixtures: could not verify stdio gateway.ready shape")
-  process.exit(1)
-}
-if (!wsSrc.includes('"type": "gateway.ready"') || !wsSrc.includes('"payload": {"skin": server.resolve_skin()}')) {
-  console.error("gen-hermes-fixtures: could not verify websocket gateway.ready shape")
-  process.exit(1)
-}
-
 const sort = (val: unknown): unknown => {
   if (Array.isArray(val)) return val.map(sort)
-  if (val && typeof val === "object") {
-    const obj = val as Record<string, unknown>
-    return Object.fromEntries(Object.keys(obj).sort().map(key => [key, sort(obj[key])]))
-  }
-  return val
+  if (!val || typeof val !== "object") return val
+  const obj = val as Record<string, unknown>
+  return Object.fromEntries(Object.keys(obj).sort().map(key => [key, sort(obj[key])]))
 }
 
 const sid = "session-fixture-0001"
@@ -198,7 +81,7 @@ const values: Record<string, unknown> = {
   running: false,
   title: "Fixture Session",
   stored_session_id: sid,
-  desktop_contract: data.desktop_contract,
+  desktop_contract: manifest.session.desktopContract,
   version: "0.0.0-fixture",
   release_date: "1970-01-01",
   update_behind: null,
@@ -207,9 +90,21 @@ const values: Record<string, unknown> = {
   profile_name: "fixture-profile",
   mcp_servers: [],
   system_prompt: "fixture system prompt",
+  credential_warning: null,
 }
 
-const info = Object.fromEntries(data.session_keys.map(key => [key, values[key] ?? null]))
+const missing = manifest.session.keys.filter(key => !(key in values))
+if (missing.length) {
+  console.error(`gen-hermes-fixtures: missing reviewed session values for ${missing.join(", ")}`)
+  process.exit(1)
+}
+const fixtureEvents = ["gateway.ready", "session.info", "status.update", "tool.start", "tool.complete"]
+const unknown = fixtureEvents.filter(name => !manifest.gateway.events.names.includes(name))
+if (unknown.length) {
+  console.error(`gen-hermes-fixtures: fixture events absent from producer manifest: ${unknown.join(", ")}`)
+  process.exit(1)
+}
+const info = Object.fromEntries(manifest.session.keys.map(key => [key, values[key]]))
 const frame = (type: string, payload?: unknown) => {
   const params: Record<string, unknown> = { type, session_id: sid }
   if (payload !== undefined) params.payload = payload
@@ -220,10 +115,12 @@ const ready = {
   method: "event",
   params: { type: "gateway.ready", payload: { skin: { name: "fixture-skin" } } },
 }
-
-const session = sort({ metadata: meta("session.info"), frame: frame("session.info", info) })
+const session = sort({
+  metadata: meta("session.info", ["tui_gateway/server.py"]),
+  frame: frame("session.info", info),
+})
 const events = sort({
-  metadata: meta("gateway-events"),
+  metadata: meta("gateway-events", ["tui_gateway/entry.py", "tui_gateway/server.py", "tui_gateway/ws.py"]),
   frames: [
     ready,
     frame("session.info", info),
@@ -233,15 +130,13 @@ const events = sort({
   ],
 })
 const cfg = sort({
-  metadata: meta("config"),
-  default_config: data.config,
+  metadata: meta("config", ["hermes_cli/config.py", "tui_gateway/server.py"]),
   canonical: {
-    approval_modes: data.approval_modes,
-    approval_mode: (data.config.approvals as Record<string, unknown> | undefined)?.mode,
-    gateway_timeout: (data.config.agent as Record<string, unknown> | undefined)?.gateway_timeout,
+    approval_modes: schema.APPROVAL_MODES,
+    approval_mode: schema.SCHEMA["approvals.mode"]?.default,
+    gateway_timeout: schema.SCHEMA["agent.gateway_timeout"]?.default,
   },
 })
-
 const text = (val: unknown) => `${JSON.stringify(val, null, 2)}\n`
 const out = new Map([
   ["session-info.json", text(session)],
@@ -250,28 +145,26 @@ const out = new Map([
   ["README.md", [
     "# Hermes producer-derived compatibility fixtures",
     "",
-    `Source revision: ${sha}`,
+    `Source revision: ${revision}`,
     `Generation command: ${cmd}`,
     "",
-    "These fixtures are generated by static source extraction from an explicit Hermes producer root.",
-    "The generator sets disposable HOME/HERMES_HOME/HERM_CONFIG_DIR/HERMES_CWD values and does not import producer modules.",
+    "These fixtures use the shared static schema extractor and committed producer manifest for one explicit Hermes root.",
+    "Complete producer inputs and capability provenance live in src/compat/hermes-manifest.ts.",
+    "The generator never imports producer modules, starts the gateway, or reads Hermes user state.",
     "",
   ].join("\n")],
 ])
 
 if (Bun.argv.includes("--check")) {
   const stale = [...out].filter(([name, body]) => !existsSync(join(target, name)) || readFileSync(join(target, name), "utf8") !== body)
-  if (stale.length === 0) {
-    console.error(`gen-hermes-fixtures: ${target} is current (${sha})`)
-    rmSync(tmp, { recursive: true, force: true })
+  if (!stale.length) {
+    console.error(`gen-hermes-fixtures: ${target} is current (${revision})`)
     process.exit(0)
   }
   console.error(`gen-hermes-fixtures: ${target} is stale (${stale.map(([name]) => name).join(", ")})`)
-  rmSync(tmp, { recursive: true, force: true })
   process.exit(1)
 }
 
 mkdirSync(target, { recursive: true })
 for (const [name, body] of out) writeFileSync(join(target, name), body)
 console.error(`gen-hermes-fixtures: wrote ${target} from ${agent}`)
-rmSync(tmp, { recursive: true, force: true })

@@ -67,12 +67,10 @@
     "generated_by": "scripts/gen-hermes-fixtures.ts",
     "generation_command": "bun scripts/gen-hermes-fixtures.ts --agent-root <producer-root>",
     "kind": "session.info",
+    "producer_manifest": "src/compat/hermes-manifest.ts",
     "source_files": [
-      "hermes_cli/config.py",
-      "tui_gateway/server.py",
-      "tui_gateway/entry.py",
-      "tui_gateway/ws.py"
+      "tui_gateway/server.py"
     ],
-    "source_revision": "41f2196c530b3359d9a7fc9c7bd41e9ddd7882c5"
+    "source_revision": "4da7b9ee029c6ece2eb7992fc27dbcd086982c84"
   }
 }

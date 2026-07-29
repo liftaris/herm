@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Hermes Agent ref to check
+        description: Hermes Agent ref to check (blank uses hermes.contract.json)
         required: false
-        default: main
+        default: ""
 
 concurrency:
   group: current-hermes-canary-${{ github.ref_name }}
@@ -28,7 +28,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: run current Hermes compatibility canary
         env:
-          HERMES_AGENT_REF: ${{ inputs.ref || 'main' }}
+          HERMES_AGENT_REF: ${{ inputs.ref }}
           CURRENT_HERMES_REPORT: ${{ runner.temp }}/current-hermes-report
         run: bun run current-hermes-canary
       - name: upload compatibility report

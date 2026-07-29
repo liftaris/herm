@@ -7,23 +7,23 @@ an executable report is asking for a new Herm feature.
 ## Responsibilities
 
 Pinned compatibility is the release contract. Pull request CI clones
-`NousResearch/hermes-agent`, checks out the pinned SHA, and runs
+the repository and revision declared in `hermes.contract.json`, then runs
 `HERMES_AGENT_ROOT=${root} bun run gen-schema:check` plus
-`HERMES_AGENT_ROOT=${root} bun run gen-gateway-inventory:check`. Release CI
-currently checks the config schema against the same pin. The committed artifacts
-are `src/config/schema.ts` and `src/compat/gateway-inventory.ts`; their headers
-record the Hermes Agent source revision, key count, RPC method count, and event
-count. CI also emits the semantic config-drift report. If a check fails, either
-regenerate the stale artifact from the same pinned source or intentionally move
-the pin and review the drift below.
+`HERMES_AGENT_ROOT=${root} bun run gen-hermes-manifest:check` and
+`HERMES_AGENT_ROOT=${root} bun run gen-fixtures:check`. Release CI checks the
+same artifacts against the same pin. The committed schema, producer manifest,
+capability policy, and fixtures must all report that revision. If a check fails,
+either regenerate the stale artifact from the pinned source or intentionally
+move the pin and review the drift below.
 
 Current-canary compatibility is advisory. The scheduled and manually dispatched
 `.github/workflows/current-hermes-canary.yml` runs
 `bun run current-hermes-canary` against the requested Hermes ref and uploads its report.
-It classifies fetch failures, generator failures, schema drift, and compatibility
-passes without rewriting pinned artifacts. A canary may open a Herm feature
-ticket or feed a planned pin bump, but it does not replace pinned CI or scheduled
-random-order tests.
+It produces semantic config findings and a raw schema diff, classifying fetch
+failures, generator failures, schema drift, and compatibility passes without
+rewriting pinned artifacts. A canary may open a Herm feature ticket or feed a
+planned pin bump, but it does not replace pinned CI or scheduled random-order
+tests.
 
 ## Executable surfaces
 
@@ -32,17 +32,17 @@ where no generator covers the surface yet.
 
 - Config schema: `bun run gen-schema:check`, `bun run gen-schema`,
   `scripts/gen-schema.ts`, `src/config/schema.ts`.
-- Gateway inventory: `bun run gen-gateway-inventory:check`,
-  `bun run gen-gateway-inventory`, `scripts/gen-gateway-inventory.ts`,
-  `src/compat/gateway-inventory.ts`.
+- Producer manifest: `bun run gen-hermes-manifest:check`,
+  `bun run gen-hermes-manifest`, `scripts/hermes-source.ts`,
+  `scripts/gen-hermes-manifest.ts`, and `src/compat/hermes-manifest.ts`. This
+  single extraction owns gateway RPCs/events, session metadata, slash commands,
+  TUI extras, and dynamic command classes.
 - Semantic config drift: `bun run config-drift -- --pinned-root /path/to/hermes-agent`,
   `scripts/config-drift.ts`, and
   `src/config/semantics.ts`. Add `--current-root` and `--warn-current` for an
   advisory latest-upstream comparison.
-- Capability coverage:
-  `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-capabilities:check`,
-  `scripts/gen-capability-inventory.ts`,
-  `src/app/capabilityInventory.ts`, and `src/app/capabilityCoverage.ts`.
+- Capability coverage: `src/app/capabilityCoverage.ts`, validated as part of
+  `gen-hermes-manifest:check` so every producer ID has one policy and rationale.
 - Producer fixtures:
   `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-fixtures:check`,
   `scripts/gen-hermes-fixtures.ts`, and
@@ -74,7 +74,7 @@ unknown dynamic producer behavior.
 ### Methods
 
 1. Identify added, removed, or renamed Hermes gateway RPC methods from
-   `GATEWAY_INVENTORY.rpc.diff`.
+   `HERMES_MANIFEST.gateway.rpc.diff`.
 2. Compare each affected local `gw.request(` use with strict `MockGateway`
    coverage.
 3. Unknown methods in tests are unsupported unless a test explicitly allows the
@@ -86,7 +86,7 @@ unknown dynamic producer behavior.
 ### Events
 
 1. Identify added, removed, or renamed Hermes gateway events from
-   `GATEWAY_INVENTORY.events.diff`.
+   `HERMES_MANIFEST.gateway.events.diff`.
 2. Compare affected event names against the typed gateway event union and
    `mapEvent`.
 3. Check whether the event persists transcript state, updates transient status,
@@ -113,7 +113,7 @@ unknown dynamic producer behavior.
 
 ### Capability classifications
 
-1. Run `gen-capabilities:check` against the named producer. Every generated RPC,
+1. Run `gen-hermes-manifest:check` against the named producer. Every generated RPC,
    slash command, TUI extra, and dynamic slash class must have one explicit
    coverage policy and rationale; stale policies fail the check.
 2. Distinguish structured RPC coverage, gateway slash fallback, local handling,
@@ -177,21 +177,19 @@ compatibility-doc update.
 
 ## Pin bump sequence
 
-1. Choose the Hermes Agent source revision and clone or update it outside
-   `~/.hermes` unless you intend to use that live install.
+1. Update the repository or pinned revision in `hermes.contract.json`, then clone
+   that exact source outside `~/.hermes` unless you intend to use the live install.
 2. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-schema:check`.
-3. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-gateway-inventory:check`.
+3. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-hermes-manifest:check`.
 4. Run `bun run config-drift -- --pinned-root /path/to/hermes-agent`.
-5. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-capabilities:check`.
-6. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-fixtures:check`.
-7. If stale, run the corresponding generator and inspect the artifact diff:
-   `src/config/schema.ts` or `src/compat/gateway-inventory.ts`.
-   Capability and fixture generators update their committed inventory or fixture
-   paths and must be reviewed with the same source revision.
-8. Apply the review checklist above for config, methods, events, capabilities,
+5. Run `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-fixtures:check`.
+6. If stale, run the corresponding generator and inspect
+   `src/config/schema.ts`, `src/compat/hermes-manifest.ts`, the capability policy,
+   and the producer fixtures together.
+7. Apply the review checklist above for config, methods, events, capabilities,
    and fixtures touched by the same upstream change.
-9. Run the same gates as CI for the touched surface. At minimum:
+8. Run the same gates as CI for the touched surface. At minimum:
    `bun run test:check:strict`, `bunx tsc --noEmit`, `bun test`, and
    `bun run build`.
-10. Commit generated artifacts and documentation together with the source revision
+9. Commit generated artifacts and documentation together with the source revision
    evidence. Do not hand-edit generated files.

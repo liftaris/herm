@@ -4,6 +4,7 @@
 
 export type ConfigType = "bool" | "int" | "float" | "str" | "list" | "dict" | "null"
 export type ConfigEffect = "live" | "session" | "restart"
+export const SCHEMA_SOURCE_REVISION = "4da7b9ee029c6ece2eb7992fc27dbcd086982c84"
 
 export interface ConfigSchemaEntry {
   type: ConfigType

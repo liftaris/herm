@@ -22,26 +22,16 @@ jobs:
       - name: check generated Hermes contracts
         run: |
           root="${RUNNER_TEMP}/hermes-agent-contracts"
+          mapfile -t contract < <(bun -e 'const c = await Bun.file("hermes.contract.json").json(); console.log(c.repository); console.log(c.pinned)')
+          repo="${contract[0]}"
+          pin="${contract[1]}"
           git init -q "${root}"
-          git -C "${root}" remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C "${root}" fetch --depth=1 origin 4da7b9ee029c6ece2eb7992fc27dbcd086982c84
+          git -C "${root}" remote add origin "${repo}"
+          git -C "${root}" fetch --depth=1 origin "${pin}"
           git -C "${root}" checkout --detach FETCH_HEAD
           HERMES_AGENT_ROOT="${root}" bun run gen-schema:check
-          HERMES_AGENT_ROOT="${root}" bun run gen-gateway-inventory:check
-      - name: report pinned config drift
-        run: |
-          root="${RUNNER_TEMP}/hermes-agent-contracts"
-          HERMES_AGENT_ROOT="${root}" bun run config-drift -- --pinned-root "${root}"
-      - name: report current config drift
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: |
-          pinned="${RUNNER_TEMP}/hermes-agent-contracts"
-          root="${RUNNER_TEMP}/hermes-agent-main"
-          git init -q "${root}"
-          git -C "${root}" remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C "${root}" fetch --depth=1 origin main
-          git -C "${root}" checkout --detach FETCH_HEAD
-          HERMES_AGENT_ROOT="${pinned}" bun run config-drift -- --pinned-root "${pinned}" --current-root "${root}" --current-ref refs/heads/main --warn-current
+          HERMES_AGENT_ROOT="${root}" bun run gen-hermes-manifest:check
+          HERMES_AGENT_ROOT="${root}" bun run gen-fixtures:check
       - run: bun run test:check:strict
       - run: bunx tsc --noEmit
       - run: bun test

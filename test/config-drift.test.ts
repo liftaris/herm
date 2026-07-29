@@ -66,6 +66,8 @@ describe("config drift report", () => {
       expect(report.schema_version).toBe(1)
       expect(report.sources.pinned.reproducible).toBe(true)
       expect(report.sources.pinned.sha).toBe(pinnedSha)
+      const contract = await Bun.file(join(import.meta.dir, "../hermes.contract.json")).json()
+      expect(report.sources.pinned.contract_sha).toBe(contract.pinned)
       expect(report.sources.current_upstream.reproducible).toBe(false)
       expect(report.sources.current_upstream.resolved_sha).toBe(currentSha)
       expect(report.summary.pinned.status).toBe("clean")

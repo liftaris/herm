@@ -203,6 +203,7 @@ export const generate = (root = findRoot()) => {
     ``,
     `export type ConfigType = "bool" | "int" | "float" | "str" | "list" | "dict" | "null"`,
     `export type ConfigEffect = "live" | "session" | "restart"`,
+    `export const SCHEMA_SOURCE_REVISION = ${JSON.stringify(sha)}`,
     ``,
     `export interface ConfigSchemaEntry {`,
     `  type: ConfigType`,
