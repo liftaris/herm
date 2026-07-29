@@ -190,6 +190,9 @@ parity sweeps and updates are done to keep Herm current.
 Herm is the dashboard TUI for Hermes Agent. It does not replace Hermes Agent,
 implement model providers itself, or own Hermes runtime behavior.
 
+For contributor review steps, see
+[`docs/hermes_compatibility.md`](./docs/hermes_compatibility.md).
+
 ## Development
 
 ```bash
