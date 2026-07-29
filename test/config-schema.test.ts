@@ -50,6 +50,15 @@ describe("schema", () => {
     expect(SCHEMA["approvals.denial_breaker_threshold"].default).toBe(3)
   })
 
+  test("approval schema matches producer-derived config fixture", async () => {
+    const fixture = await Bun.file(new URL("fixtures/hermes/config.json", import.meta.url)).json() as {
+      canonical: { approval_modes: string[]; approval_mode: string; gateway_timeout: number }
+    }
+    expect([...APPROVAL_MODES] as string[]).toEqual(fixture.canonical.approval_modes)
+    expect(SCHEMA["approvals.mode"].default).toBe(fixture.canonical.approval_mode)
+    expect(SCHEMA["agent.gateway_timeout"].default).toBe(fixture.canonical.gateway_timeout)
+  })
+
   test("docs captured for commented leaves", () => {
     expect(SCHEMA["agent.gateway_timeout"].doc.length).toBeGreaterThan(20)
     expect(SCHEMA["compression.threshold"].doc.length).toBeGreaterThan(5)

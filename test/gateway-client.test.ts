@@ -499,6 +499,32 @@ describe("GatewayClient websocket attach mode", () => {
     gw.kill()
   })
 
+  test("accepts producer-derived gateway event envelope fixtures", async () => {
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=abc"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const fixture = await Bun.file(new URL("fixtures/hermes/gateway-events.json", import.meta.url)).json() as {
+      frames: Array<{ jsonrpc: string; method: string; params: { type: string } }>
+    }
+    const gw = new GatewayClient()
+    const events: string[] = []
+
+    gw.on("event", ev => events.push(ev.type))
+    gw.drain()
+    gw.start()
+    const ws = FakeSocket.list[0]!
+    ws.open()
+    await Bun.sleep(0)
+    for (const frame of fixture.frames) {
+      expect(frame.jsonrpc).toBe("2.0")
+      expect(frame.method).toBe("event")
+      ws.message(JSON.stringify(frame))
+    }
+
+    expect(events).toEqual(fixture.frames.map(frame => frame.params.type))
+    expect(gw.ready).toBe(true)
+    gw.kill()
+  })
+
   test("socket close emits exit and reconnects with the reusable URL", () => {
     process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?internal=abc"
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { formatProcessNotification, mapEvent, type Side } from "../src/context/events"
 import { knownGatewayEvent, type GatewayEvent } from "../src/context/wire"
 
+type EventFrame = { jsonrpc: string; method: string; params: GatewayEvent }
+
 function map(ev: GatewayEvent, side: Partial<Side> = {}) {
   const calls: Record<string, unknown[]> = {}
   const spy = (name: string) => (...a: unknown[]) => { calls[name] = a }
@@ -279,5 +281,22 @@ describe("mapEvent", () => {
     expect(map({ type: "review.summary", payload: { text: "   \n\t" } }).action).toBeNull()
     expect(map({ type: "review.summary", payload: undefined } as GatewayEvent).action).toBeNull()
     expect(map({ type: "review.summary" } as GatewayEvent).action).toBeNull()
+  })
+
+  test("producer-derived session.info fixture maps through the consumer event path", async () => {
+    const fixture = await Bun.file(new URL("fixtures/hermes/session-info.json", import.meta.url)).json() as { frame: EventFrame }
+    expect(fixture.frame.jsonrpc).toBe("2.0")
+    expect(fixture.frame.method).toBe("event")
+    expect(fixture.frame.params.type).toBe("session.info")
+    if (fixture.frame.params.type !== "session.info") throw new Error("expected session.info fixture")
+    const payload = fixture.frame.params.payload
+
+    const r = map(fixture.frame.params)
+    expect(r.calls.info).toEqual([payload])
+    expect(r.action?.kind).toBe("system")
+    if (r.action?.kind !== "system") throw new Error("expected system action")
+    expect(r.action.text).toContain(payload.model ?? "")
+    expect(r.action.text).toContain("3 tools")
+    expect(r.action.text).toContain("2 skills")
   })
 })
