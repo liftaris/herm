@@ -13,6 +13,7 @@ import type { GatewayEvent } from "../src/context/wire"
 describe("app", () => {
   const mount = (opts: Parameters<typeof mountApp>[0] = {}) =>
     mountApp({ keyOverrides: {}, ...opts })
+  const bad = { model: "bad-model", session_id: "bad-sid", tools: {}, skills: {}, desktop_contract: 99 }
 
   const clearKeyPrefs = () => {
     prefs.set("keys", undefined)
@@ -33,6 +34,50 @@ describe("app", () => {
     // boot() resumes lastSessionId if set by an earlier test, else creates
     expect(t.gw.last("session.create") ?? t.gw.last("session.resume")).toBeDefined()
 
+    t.destroy()
+  })
+
+  test("unsupported backend contract reports blocked prompt submit", async () => {
+    const gw = new MockGateway({
+      "session.create": () => ({ session_id: "bad-sid", info: bad }),
+    })
+    gw.start = () => {
+      gw.ok = true
+      gw.push({ type: "gateway.ready" })
+    }
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("bad-model"))
+
+    await act(async () => { await t.keys.typeText("blocked prompt") })
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("Blocked prompt.submit."))
+
+    expect(t.frame()).toContain("Hermes backend contract 99 is newer")
+    expect(t.gw.last("prompt.submit")).toBeUndefined()
+    t.destroy()
+  })
+
+  test("unsupported backend contract reports blocked gateway slash command", async () => {
+    const gw = new MockGateway({
+      "session.create": () => ({ session_id: "bad-sid", info: bad }),
+    })
+    gw.start = () => {
+      gw.ok = true
+      gw.push({ type: "gateway.ready" })
+    }
+    const t = await mount({ gw })
+    await until(t, () => t.frame().includes("bad-model"))
+
+    await act(async () => { await t.keys.typeText("/go") })
+    await until(t, () => t.frame().includes("/goal"))
+    const rows = t.frame().split("\n")
+    const y = rows.findIndex(row => row.includes("/goal"))
+    await act(async () => { await t.mouse.pressDown(rows[y].indexOf("/goal"), y) })
+    await until(t, () => t.frame().includes("Blocked slash.exec."))
+
+    expect(t.frame()).toContain("Hermes backend contract 99 is newer")
+    expect(t.gw.last("slash.exec")).toBeUndefined()
+    expect(t.gw.last("command.dispatch")).toBeUndefined()
     t.destroy()
   })
 

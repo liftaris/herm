@@ -76,6 +76,7 @@ type Props = {
   onAttachClipboard?: () => void
   onEnqueue?: (text: string) => void
   onDequeue?: (i: number) => void
+  onSubmitBlocked?: () => void
   /** Enter pressed with an empty buffer. Return true to consume. */
   onEmptyEnter?: () => boolean
   /** Fires on the empty↔non-empty edge of the input buffer. */
@@ -304,7 +305,8 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>((props, ref) => {
     }
     const text = exp.text.trim()
     if (live.current.props.streaming) {
-      if (!text || !live.current.props.canSubmitPrompt) return
+      if (!text) return
+      if (!live.current.props.canSubmitPrompt) { live.current.props.onSubmitBlocked?.(); return }
       hist.push({ input: text, parts: exp.parts })
       write("")
       // Slash-shaped input routes through onSend so send() → slash()
@@ -317,7 +319,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>((props, ref) => {
     }
     const hasAtt = (live.current.props.attachments?.length ?? 0) > 0
     if (!text && !hasAtt) { live.current.props.onEmptyEnter?.(); return }
-    if (!live.current.props.canSubmitPrompt) return
+    if (!live.current.props.canSubmitPrompt) { live.current.props.onSubmitBlocked?.(); return }
     if (text) hist.push({ input: text, parts: exp.parts })
     write("")
     live.current.props.onSend(text, exp.parts)

@@ -734,6 +734,14 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   }, [gw, slash, toast, updateAttachments])
   sendRef.current = send
 
+  const blocked = useCallback(() => {
+    const msg = capabilities.contractMessage
+    if (!msg) return
+    const text = `${msg} Blocked prompt.submit.`
+    dispatch({ kind: "system", text: `submit failed: ${text}` })
+    toast.show({ variant: "error", message: text })
+  }, [capabilities.contractMessage, toast])
+
   // Shell mode submit — `shell.exec` is a plain subprocess (no pty,
   // 30s cap, gateway cwd) with detect_dangerous_command blocklist.
   // Output lands in the transcript as $ cmd / stdout system messages,
@@ -1011,6 +1019,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
                 onAttachClipboard={attachClipboard}
                 onEnqueue={onEnqueue}
                 onDequeue={dequeue}
+                onSubmitBlocked={blocked}
                 onDirty={setComposing}
                 onEmptyEnter={onEmptyEnter}
               />

@@ -584,7 +584,15 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
           return
       }
     }
-    if (c.target !== "gateway" || !x.capabilities.canDispatchGatewayCommand) return
+    if (c.target !== "gateway") return
+    if (!x.capabilities.canDispatchGatewayCommand) {
+      const msg = x.capabilities.contractMessage
+      if (!msg) return
+      const text = `${msg} Blocked slash.exec.`
+      x.dispatch({ kind: "system", text: `error: ${text}` })
+      toast.show({ variant: "error", message: text })
+      return
+    }
     const jump = TAB_SLASH[c.name]
     if (jump !== undefined && !arg) { x.goTo(jump.tab, jump.sub); return }
     const full = `/${c.name}${arg ? " " + arg : ""}`
