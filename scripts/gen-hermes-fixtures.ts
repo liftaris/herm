@@ -53,7 +53,7 @@ const sha = (() => {
   return "unknown"
 })()
 
-const cmd = `bun scripts/gen-hermes-fixtures.ts --agent-root ${agent}`
+const cmd = "bun scripts/gen-hermes-fixtures.ts --agent-root <producer-root>"
 const target = resolve(arg("--out") || join(import.meta.dir, "..", "test", "fixtures", "hermes"))
 const meta = (kind: string) => ({
   generated_by: "scripts/gen-hermes-fixtures.ts",

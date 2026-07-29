@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
 const script = join(import.meta.dir, "../scripts/gen-hermes-fixtures.ts")
 
-const run = async (root: string, args: string[] = []) => {
-  const proc = Bun.spawn(["bun", script, "--agent-root", join(root, "agent"), ...args], {
+const run = async (root: string, args: string[] = [], agent = join(root, "agent")) => {
+  const proc = Bun.spawn(["bun", script, "--agent-root", agent, ...args], {
     env: {
       ...process.env,
       HOME: join(root, "home"),
@@ -78,17 +78,20 @@ describe("Hermes compatibility fixture generator", () => {
     const root = mkdtempSync(join(tmpdir(), "herm-producer-"))
     const one = join(root, "one")
     const two = join(root, "two")
+    const link = join(root, "link")
     try {
       write(root)
+      symlinkSync(join(root, "agent"), link, "dir")
       expect((await run(root, ["--out", one])).code).toBe(0)
-      expect((await run(root, ["--out", two])).code).toBe(0)
+      expect((await run(root, ["--out", two], link)).code).toBe(0)
       for (const name of ["README.md", "config.json", "gateway-events.json", "session-info.json"])
         expect(await Bun.file(join(two, name)).text()).toBe(await Bun.file(join(one, name)).text())
       const session = await Bun.file(join(one, "session-info.json")).json()
       expect(session.metadata.source_revision).toHaveLength(40)
       expect(session.metadata.generation_command).toContain("scripts/gen-hermes-fixtures.ts")
+      expect(session.metadata.generation_command).not.toContain(root)
       expect(session.frame.params.payload.desktop_contract).toBe(7)
-      expect((await run(root, ["--check", "--out", one])).code).toBe(0)
+      expect((await run(root, ["--check", "--out", one], link)).code).toBe(0)
       writeFileSync(join(one, "session-info.json"), "{}\n")
       const stale = await run(root, ["--check", "--out", one])
       expect(stale.code).toBe(1)

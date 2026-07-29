@@ -118,7 +118,7 @@
   ],
   "metadata": {
     "generated_by": "scripts/gen-hermes-fixtures.ts",
-    "generation_command": "bun scripts/gen-hermes-fixtures.ts --agent-root /home/kaio/.hermes/hermes-agent",
+    "generation_command": "bun scripts/gen-hermes-fixtures.ts --agent-root <producer-root>",
     "kind": "gateway-events",
     "source_files": [
       "hermes_cli/config.py",
