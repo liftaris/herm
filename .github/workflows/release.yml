@@ -54,6 +54,11 @@ jobs:
           git -C "${root}" checkout --detach FETCH_HEAD
           HERMES_AGENT_ROOT="${root}" bun run gen-schema:check
 
+      - name: report pinned config drift
+        run: |
+          root="${RUNNER_TEMP}/hermes-agent-schema"
+          HERMES_AGENT_ROOT="${root}" bun run config-drift -- --pinned-root "${root}"
+
       - run: bun run test:check:strict
 
       - run: bunx tsc --noEmit

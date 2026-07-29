@@ -10,7 +10,7 @@
  */
 
 import { TOOL_PROGRESS } from "./lane"
-import { APPROVAL_MODES } from "./schema"
+import { SELECTS } from "./semantics"
 
 type Rule = (raw: string) => string | null
 
@@ -38,7 +38,7 @@ const float = (lo: number, hi: number): Rule => raw => {
   return null
 }
 
-const oneOf = (...opts: string[]): Rule => raw =>
+const oneOf = (...opts: readonly string[]): Rule => raw =>
   opts.includes(raw) ? null : `expected one of: ${opts.join(" | ")}`
 
 const nonNeg: Rule = raw => {
@@ -91,7 +91,7 @@ export const RULES: Record<string, Rule> = {
   "display.tool_progress": oneOf(...TOOL_PROGRESS),
   "display.final_response_markdown": oneOf("render", "strip", "raw"),
   "logging.level": oneOf("DEBUG", "INFO", "WARNING", "ERROR"),
-  "approvals.mode": oneOf(...APPROVAL_MODES),
+  "approvals.mode": oneOf(...SELECTS["approvals.mode"]),
   "code_execution.mode": oneOf("project", "strict"),
   "onboarding.profile_build": oneOf("ask", "off"),
   "streaming.transport": oneOf("auto", "draft", "edit", "off"),
