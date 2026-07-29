@@ -1132,7 +1132,6 @@ export const GATEWAY_INVENTORY = {
         "subscription.state",
         "subscription.upgrade",
         "system.battery",
-        "terminal.read.respond",
         "terminal.resize",
         "tools.list",
         "tools.show",
@@ -1929,27 +1928,13 @@ export const GATEWAY_INVENTORY = {
     ],
     "diff": {
       "additions": [
-        "agent.terminal.output",
-        "billing.step_up.verification",
         "clarify.expire",
-        "message.interim",
-        "moa.phase",
-        "moa.progress",
         "pane.reveal",
-        "pet.generate.progress",
-        "pet.hatch.progress",
         "preview.open",
-        "preview.restart.complete",
-        "preview.restart.progress",
-        "reaction",
         "secret.expire",
         "subagent.spawn_requested",
         "sudo.expire",
-        "terminal.close",
-        "terminal.read.expire",
-        "terminal.read.request",
-        "tool.output_risk",
-        "voice.interrupted"
+        "terminal.read.expire"
       ],
       "removals": [
         "btw.complete",
@@ -1958,13 +1943,7 @@ export const GATEWAY_INVENTORY = {
         "gateway.stderr",
         "tool.progress"
       ],
-      "likelyRenames": [
-        {
-          "from": "tool.progress",
-          "to": "moa.progress",
-          "score": 0.5
-        }
-      ]
+      "likelyRenames": []
     }
   }
 } as const
