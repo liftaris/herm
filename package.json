@@ -33,6 +33,8 @@
     "gen-gateway-inventory": "bun scripts/gen-gateway-inventory.ts",
     "gen-gateway-inventory:check": "bun scripts/gen-gateway-inventory.ts --check",
     "config-drift": "bun scripts/config-drift.ts",
+    "gen-capabilities": "bun scripts/gen-capability-inventory.ts",
+    "gen-capabilities:check": "bun scripts/gen-capability-inventory.ts --check",
     "gen-theme": "bun scripts/gen-theme-manifest.ts",
     "build": "bun scripts/build.ts",
     "start": "bun run dist/index.js",
