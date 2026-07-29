@@ -38,6 +38,7 @@
     "gen-fixtures": "bun scripts/gen-hermes-fixtures.ts",
     "gen-fixtures:check": "bun scripts/gen-hermes-fixtures.ts --check",
     "gen-theme": "bun scripts/gen-theme-manifest.ts",
+    "current-hermes-canary": "bun scripts/current-hermes-canary.ts",
     "build": "bun scripts/build.ts",
     "start": "bun run dist/index.js",
     "test": "bun test",

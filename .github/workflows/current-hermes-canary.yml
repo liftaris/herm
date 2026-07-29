@@ -1,0 +1,41 @@
+name: current-Hermes canary
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Hermes Agent ref to check
+        required: false
+        default: main
+
+concurrency:
+  group: current-hermes-canary-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - name: run current Hermes compatibility canary
+        env:
+          HERMES_AGENT_REF: ${{ inputs.ref || 'main' }}
+          CURRENT_HERMES_REPORT: ${{ runner.temp }}/current-hermes-report
+        run: bun run current-hermes-canary
+      - name: upload compatibility report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: current-hermes-compatibility-${{ github.run_id }}
+          path: ${{ runner.temp }}/current-hermes-report
+          if-no-files-found: error
+          retention-days: 30
