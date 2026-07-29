@@ -7,7 +7,7 @@ describe("lazy session startup", () => {
     const gw = new MockGateway({
       "session.create": () => ({
         session_id: "lazy-sid",
-        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true },
+        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
       "prompt.submit": () => ({ status: "streaming" }),
     })
@@ -34,7 +34,7 @@ describe("lazy session startup", () => {
     const gw = new MockGateway({
       "session.create": () => ({
         session_id: "lazy-sid",
-        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true },
+        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
       "commands.catalog": () => ({ pairs: [["/review", "Review with skill"]] }),
       "slash.exec": () => { throw new Error("fall through") },
@@ -73,7 +73,7 @@ describe("lazy session startup", () => {
     const gw = new MockGateway({
       "session.create": () => ({
         session_id: "lazy-sid",
-        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true },
+        info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
       "prompt.submit": () => ({ status: "streaming" }),
     })

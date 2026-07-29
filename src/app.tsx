@@ -58,6 +58,7 @@ import { sessionCapabilities } from "./app/sessionCapabilities"
 import { useGitBranch } from "./utils/git"
 import type { HermPlugin } from "./plugins/types"
 import { useMessageActions } from "./app/useMessageActions"
+import { backend } from "./context/backend-contract"
 
 type AppProps = {
   initialTheme?: string
@@ -111,7 +112,6 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [starting, setStarting] = useState(false)
   const startRef = useRef(starting); startRef.current = starting
   const active = turn.streaming || starting
-  const capabilities = sessionCapabilities({ sid, ready, streaming: active })
   const [tab, setTab] = useState(CHAT_TAB)
   // Sub-tab per group — Chat has none, so key 0 is unused.
   // Defensive clamp lives inside each group (SessionsGroup/Automation/
@@ -132,6 +132,15 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const [hideSidebar, setHideSidebar] = useState(false)
   const [usage, setUsage] = useState<Usage | undefined>(undefined)
   const [info, setInfo] = useState<SessionInfo | null>(null)
+  const [contract, setContract] = useState(() => backend.backendContract(null))
+  const recordInfo = useCallback((next: SessionInfo | null) => {
+    setInfo(next)
+    setContract(prev => {
+      const state = backend.backendContract(next)
+      return state.reason === "missing" && prev.supported ? prev : state
+    })
+  }, [])
+  const capabilities = sessionCapabilities({ sid, ready, streaming: active, contract })
   const [title, setTitle] = useState("")
   const caption = title.trim()
   const titleRef = useRef(caption); titleRef.current = caption
@@ -392,7 +401,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
-    setSid, setDurable, setInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
+    setSid, setDurable, setInfo: recordInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setErrorPulse, settle,
     onVoiceStatus: state => {
       voice.setRecording(state === "listening" || state === "recording")
       voice.setProcessing(state === "transcribing" || state === "processing")
@@ -446,7 +455,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setSid(r.id)
       setDurable(r.key)
       launchRef.current = { mode: "resume", sid: r.key, splash: false }
-      if (r.info) { setInfo(r.info); setUsage(r.info.usage) }
+      if (r.info) { recordInfo(r.info); setUsage(r.info.usage) }
       setReady(true)
       setStarting(false)
       setStatus("")
@@ -483,7 +492,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setDurable(res.key)
       launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
-        setInfo(res.info)
+        recordInfo(res.info)
         setUsage(res.info.usage)
       }
       setReady(true)
@@ -533,7 +542,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
       setDurable(res.key)
       launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
-        setInfo(res.info)
+        recordInfo(res.info)
         setUsage(res.info.usage)
       }
       sessionStart.current = res.startedAt ?? Date.now()
@@ -571,7 +580,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
     gw.setSession("")
     setSid("")
     setDurable("")
-    setInfo(null)
+    recordInfo(null)
     setSkin(deriveSkin(undefined))
     // Fresh gateway boots behind the splash (same as cold launch); the
     // respawned process emits gateway.ready → session.info → onSend
@@ -627,7 +636,7 @@ const AppInner = ({ launch: launch0 }: { launch: Launch }) => {
   const slash = useSlash({
     dispatch, session, turnRef, queueRef, sendRef, composer, summoned, undone,
     capabilities, info, sid, resumeId: durable || sid, title: caption, skin,
-    setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo, setUsage, setTitle,
+    setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo: recordInfo, setUsage, setTitle,
     newSession, switchSession, activateSession, rewind, goTo, attachClipboard, voiceToggle: voice.toggle,
   })
   const send = useCallback(async (raw: string) => {

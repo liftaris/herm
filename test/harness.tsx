@@ -36,13 +36,14 @@ type RuleOpts = {
 type Rule = { method: string; calls: number; min: number; max: number }
 
 const preset: Record<string, Handler> = {
-  "session.resume": p => ({ session_id: p.session_id ?? "test-sid", messages: [] }),
+  "session.resume": p => ({ session_id: p.session_id ?? "test-sid", messages: [], info: { desktop_contract: 4 } }),
   "session.list": () => ({ sessions: [] }),
   "session.active_list": () => ({ sessions: [] }),
-  "session.activate": p => ({ session_id: p.session_id ?? "test-sid", messages: [], status: "idle" }),
+  "session.activate": p => ({ session_id: p.session_id ?? "test-sid", messages: [], status: "idle", info: { desktop_contract: 4 } }),
   "agents.list": () => ({ processes: [] }),
   "delegation.status": () => ({ active: [], paused: false, max_spawn_depth: 2, max_concurrent_children: 3 }),
   "complete.path": () => ({ items: [] }),
+  "complete.slash": () => ({ items: [] }),
   "paste.collapse": p => ({
     placeholder: `[Pasted text #1: ${String(p.text).split("\n").length} lines → /tmp/p.txt]`,
     path: "/tmp/p.txt",
@@ -90,7 +91,7 @@ export class MockGateway extends EventEmitter implements Gateway {
     const env = process.env.HERM_MOCK_GATEWAY_MODE
     this.mode = opts.mode ?? (env === "compat" || env === "audit" ? env : "strict")
     // Sane defaults so <App> boots without hanging.
-    this.on$("session.create", () => ({ session_id: "test-sid" }))
+    this.on$("session.create", () => ({ session_id: "test-sid", info: { desktop_contract: 4 } }))
     this.on$("config.get", p => p.key === "full" ? { config: {} } : {})
     this.on$("commands.catalog", () => ({ pairs: [] }))
     for (const [m, h] of Object.entries(handlers)) this.on$(m, h)
@@ -122,7 +123,7 @@ export class MockGateway extends EventEmitter implements Gateway {
   start() {
     this.ok = true
     this.push({ type: "gateway.ready" })
-    this.push({ type: "session.info", payload: { model: "test-model", session_id: "test-sid", tools: {}, skills: {} } })
+    this.push({ type: "session.info", payload: { model: "test-model", session_id: "test-sid", tools: {}, skills: {}, desktop_contract: 4 } })
   }
 
   drain() {

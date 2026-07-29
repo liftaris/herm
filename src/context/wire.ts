@@ -223,6 +223,8 @@ export type SessionInfo = {
    */
   tools?: Record<string, string[]>
   skills?: Record<string, string[]>
+  desktop_contract?: number
+  source_revision?: string
   version?: string
   /**
    * Live active-agent system prompt from `agent._cached_system_prompt`

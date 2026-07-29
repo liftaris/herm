@@ -136,6 +136,20 @@ describe("python", () => {
 })
 
 describe("GatewayClient", () => {
+  test("unsupported backend contract blocks mutations before transport writes", async () => {
+    const prev = Bun.spawn
+    let spawns = 0
+    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => { spawns++; throw new Error("should not spawn") }) as typeof Bun.spawn
+    const gw = new GatewayClient()
+
+    try {
+      await expect(gw.request("prompt.submit", { text: "hi" })).rejects.toThrow("Blocked prompt.submit")
+      expect(spawns).toBe(0)
+    } finally {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = prev
+    }
+  })
+
   test("synchronous spawn failure reports exit without throwing", () => {
     const prev = Bun.spawn
     ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => {
@@ -311,7 +325,7 @@ describe("GatewayClient", () => {
     const gw = new GatewayClient()
     try {
       gw.start()
-      const old = gw.request("test.pending").then(
+      const old = gw.request("config.get", { key: "pending" }).then(
         () => "resolved",
         (e: Error) => e.message,
       )

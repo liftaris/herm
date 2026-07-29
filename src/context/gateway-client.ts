@@ -6,6 +6,7 @@ import { homedir } from "os"
 import { resolve, delimiter } from "path"
 import { existsSync } from "fs"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
+import { backend } from "./backend-contract"
 import { encode } from "../utils/unicode"
 
 const LOG_MAX = 200
@@ -192,6 +193,7 @@ export class GatewayClient extends EventEmitter {
   private unknown = new Map<string, Diag>()
   private pending = new Map<string, Pending>()
   private buf: GatewayEvent[] = []
+  private contract = backend.backendContract(null)
   private exit: number | null | undefined
   private ok = false
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -238,24 +240,37 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
+  private observe(raw: unknown) {
+    const next = backend.backendContract(raw)
+    this.contract = next.reason === "missing" && this.contract.supported ? this.contract : next
+  }
+
   private dispatch(msg: Record<string, unknown>, source: GatewayEventSource = "stdio") {
     const id = msg.id as string | undefined
     const p = id ? this.pending.get(id) : undefined
 
     if (p) {
       this.pending.delete(id!)
+      const res = msg.result
+      const info = res && typeof res === "object" && !Array.isArray(res)
+        ? (res as { info?: unknown }).info
+        : undefined
+      if (info) this.observe(info)
       if (msg.error) {
         const err = msg.error as { message?: unknown }
         p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
       } else {
-        p.resolve(msg.result)
+        p.resolve(res)
       }
       return
     }
 
     if (msg.method === "event") {
       const ev = asEvent(msg.params)
-      if (ev) this.push(ev, source)
+      if (ev) {
+        if (ev.type === "session.info") this.observe(ev.payload)
+        this.push(ev, source)
+      }
     }
   }
 
@@ -368,6 +383,7 @@ export class GatewayClient extends EventEmitter {
     // Reset state
     this.ok = false
     this.buf = []
+    this.contract = backend.backendContract(null)
     this.exit = undefined
 
     let restarted = false
@@ -488,6 +504,8 @@ export class GatewayClient extends EventEmitter {
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    const blocked = backend.contractError(method, this.contract, params)
+    if (blocked) return Promise.reject(blocked)
     const raw = gatewayUrl()
     if (raw) return this.remote<T>(raw, method, params)
     if (!this.proc || this.proc.exitCode !== null) this.start()
@@ -527,6 +545,8 @@ export class GatewayClient extends EventEmitter {
   }
 
   private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
+    const blocked = backend.contractError(method, this.contract, params)
+    if (blocked) return Promise.reject(blocked)
     try { websocketUrl(raw) }
     catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
     if (this.target !== raw || !this.ws || this.ws.readyState === WS_CLOSING || this.ws.readyState === WS_CLOSED)
