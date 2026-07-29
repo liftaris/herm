@@ -11,6 +11,7 @@ import { useRenderer } from "@opentui/react"
 import { CHAT_TAB } from "./tabs"
 import type { Action, TurnState } from "./turnReducer"
 import type { ComposerHandle } from "../components/chat/Composer"
+import type { GatewayEvent } from "../context/wire"
 
 type Region = "input" | "content"
 
@@ -61,7 +62,11 @@ export function useBridge(o: {
       renderer: () => renderer,
       logs: (n?: number) => gw.tail(n),
       plugin: (id, on) => on ? plugins.activate(id) : plugins.deactivate(id),
-      push: ev => (gw as unknown as { emit: (t: string, e: unknown) => void }).emit("event", ev),
+      push: ev => {
+        const e = ev as GatewayEvent
+        gw.diagnose?.(e, "control")
+        gw.emit("event", e)
+      },
     })
   }, [gw, renderer, plugins])
 }

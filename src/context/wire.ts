@@ -58,6 +58,53 @@ export type GatewayEvent = ({
   | { type: "error"; payload?: { message?: string } }
 ))
 
+export const GATEWAY_EVENT_TYPES = [
+  "gateway.ready",
+  "gateway.stderr",
+  "gateway.start_timeout",
+  "gateway.protocol_error",
+  "session.info",
+  "session.title",
+  "skin.changed",
+  "message.start",
+  "message.delta",
+  "message.complete",
+  "thinking.delta",
+  "reasoning.delta",
+  "reasoning.available",
+  "moa.reference",
+  "moa.aggregating",
+  "status.update",
+  "notification.show",
+  "notification.clear",
+  "tool.start",
+  "tool.progress",
+  "tool.generating",
+  "tool.complete",
+  "clarify.request",
+  "approval.request",
+  "sudo.request",
+  "secret.request",
+  "background.complete",
+  "review.summary",
+  "btw.complete",
+  "browser.progress",
+  "voice.status",
+  "voice.transcript",
+  "subagent.start",
+  "subagent.thinking",
+  "subagent.tool",
+  "subagent.progress",
+  "subagent.complete",
+  "error",
+] as const satisfies readonly GatewayEvent["type"][]
+
+const EVENT_TYPES = new Set<string>(GATEWAY_EVENT_TYPES)
+
+export function knownGatewayEvent(type: string): type is GatewayEvent["type"] {
+  return EVENT_TYPES.has(type)
+}
+
 export type SubagentPayload = {
   task_index: number
   goal: string

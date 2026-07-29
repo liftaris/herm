@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { delimiter, join, resolve } from "path"
 import { tmpdir } from "os"
 import { GatewayClient, gatewayUrl, hermesAgentRoot, python, websocketUrl } from "../src/context/gateway-client"
+import type { GatewayEvent } from "../src/context/wire"
 
 class FakeSocket extends EventTarget {
   static list: FakeSocket[] = []
@@ -532,5 +533,62 @@ describe("GatewayClient websocket attach mode", () => {
       .toBe("ws://127.0.0.1:9119/api/ws?token=abc")
     expect(() => websocketUrl("ftp://gateway.test/?token=abc"))
       .toThrow("unsupported gateway URL protocol: ftp:")
+  })
+})
+
+const ev = (value: unknown) => value as GatewayEvent
+
+describe("GatewayClient diagnostics", () => {
+  test("unknown gateway events enter structured redacted diagnostics", () => {
+    const gw = new GatewayClient()
+    gw.diagnose(ev({
+      type: "future.event",
+      contract_version: 4,
+      payload: {
+        text: "visible",
+        token: "SECRET_TOKEN_SENTINEL",
+        nested: { password: "SECRET_PASSWORD_SENTINEL" },
+      },
+    }), "stdio")
+
+    const log = gw.tail(5)
+    expect(log).toContain("[event unknown]")
+    expect(log).toContain("type=future.event")
+    expect(log).toContain("source=stdio")
+    expect(log).toContain("contract=4")
+    expect(log).toContain("count=1")
+    expect(log).toContain("visible")
+    expect(log).toContain("[redacted]")
+    expect(log).not.toContain("SECRET_TOKEN_SENTINEL")
+    expect(log).not.toContain("SECRET_PASSWORD_SENTINEL")
+  })
+
+  test("repeated unknown events update the first diagnostic with aggregate count", () => {
+    const gw = new GatewayClient()
+    gw.diagnose(ev({ type: "future.repeat", payload: { marker: "FIRST_PAYLOAD" } }), "websocket")
+    gw.diagnose(ev({ type: "future.repeat", payload: { marker: "SECOND_PAYLOAD" } }), "websocket")
+    gw.diagnose(ev({ type: "future.repeat", payload: { marker: "THIRD_PAYLOAD" } }), "websocket")
+
+    const rows = gw.tail(10).split("\n").filter(Boolean)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain("count=3")
+    expect(rows[0]).toContain("FIRST_PAYLOAD")
+    expect(rows[0]).not.toContain("SECOND_PAYLOAD")
+    expect(rows[0]).not.toContain("THIRD_PAYLOAD")
+  })
+
+  test("known intentionally ignored events are not classified as unknown", () => {
+    const gw = new GatewayClient()
+    gw.diagnose(ev({ type: "session.title", payload: { session_id: "s", title: "t" } }), "control")
+    gw.diagnose(ev({ type: "voice.status", payload: { state: "idle" } }), "control")
+    expect(gw.tail(10)).not.toContain("[event unknown]")
+  })
+
+  test("diagnostics cannot crash on circular payloads", () => {
+    const payload: Record<string, unknown> = { text: "safe" }
+    payload.self = payload
+    const gw = new GatewayClient()
+    expect(() => gw.diagnose(ev({ type: "future.circular", payload }), "control")).not.toThrow()
+    expect(gw.tail(5)).toContain("[circular]")
   })
 })

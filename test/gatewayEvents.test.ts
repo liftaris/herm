@@ -180,6 +180,12 @@ describe("mapEvent", () => {
       .toEqual({ kind: "system", text: "protocol error: bad" })
   })
 
+  test("unknown event is diagnostic-only for transcript/session mapping", () => {
+    const r = map({ type: "future.event", payload: { text: "ignored" } } as unknown as GatewayEvent)
+    expect(r.action).toBeNull()
+    expect(r.calls).toEqual({})
+  })
+
   test("thinking.delta is status-only; reasoning.* → thinking action", () => {
     const r = map({ type: "thinking.delta", payload: { text: "(•_•) formulating" } })
     expect(r.action).toBeNull()
