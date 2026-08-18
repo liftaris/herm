@@ -1,3 +1,10 @@
+## [Unreleased]
+
+### Fixed
+* Prevent duplicate MCP connection warnings in chat transcripts (#251).
+* Support Hermes backend contract 6 for mutating session commands (#251).
+* Allow local gateways more time for slow MCP startup (#251).
+
 # [1.10.0](https://github.com/liftaris/herm/compare/v1.9.0...v1.10.0) (2026-07-10)
 
 

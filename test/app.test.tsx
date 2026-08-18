@@ -891,28 +891,23 @@ describe("app", () => {
     t.destroy()
   })
 
-  test("failed MCP servers surface as system line on ready", async () => {
+  test("failed MCP servers stay out of the transcript across session.info updates", async () => {
     const gw = new MockGateway()
     const t = await mount({ gw })
-    // gateway.ready already fired in start(); push a session.info with servers
-    act(() => gw.push({
-      type: "session.info",
-      payload: {
-        model: "test-model", session_id: "test-sid", tools: {}, skills: {},
-        mcp_servers: [
-          { name: "goodsrv", transport: "stdio", tools: 5, connected: true },
-          { name: "badsrv", transport: "http", tools: 0, connected: false, error: "ECONNREFUSED" },
-        ],
-      },
-    }))
-    await until(t, () => t.frame().includes("MCP:"))
-    const f = t.frame()
-    expect(f).toContain("1 server(s) failed")
-    expect(f).toContain("badsrv (ECONNREFUSED)")
-    expect(f).not.toContain("goodsrv (") // good one not listed in failure line
-    // sidebar MCP section appears (collapsed) with hint
-    expect(f).toContain("▸ MCP")
-    expect(f).toContain("1/2 up")
+    const info = {
+      model: "test-model", session_id: "test-sid", tools: {}, skills: {},
+      mcp_servers: [
+        { name: "goodsrv", transport: "stdio", tools: 5, connected: true },
+        { name: "badsrv", transport: "http", tools: 0, connected: false, error: "ECONNREFUSED" },
+      ],
+    }
+    act(() => gw.push({ type: "session.info", payload: info }))
+    await until(t, () => t.frame().includes("1/2 up"))
+    act(() => gw.push({ type: "session.info", payload: info }))
+    await t.settle()
+    expect(t.frame()).not.toContain("MCP: 1 server(s) failed to connect")
+    expect(t.frame()).toContain("▸ MCP")
+    expect(t.frame()).toContain("1/2 up")
     t.destroy()
   })
 
