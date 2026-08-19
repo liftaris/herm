@@ -11,7 +11,7 @@ describe("backend contract", () => {
 
     expect(state).toMatchObject({
       minContract: 4,
-      maxContract: 5,
+      maxContract: 6,
       supported: false,
       reason: "missing",
       version: "0.19.0",
@@ -42,19 +42,27 @@ describe("backend contract", () => {
   })
 
   test("current supported producer contract enables session capabilities", () => {
+    const state = info(6)
     const cap = sessionCapabilities({
       sid: "lazy-sid",
       ready: true,
       streaming: false,
-      contract: info(4),
+      contract: state,
     })
 
+    expect(state).toMatchObject({
+      maxContract: 6,
+      observedContract: 6,
+      supported: true,
+      reason: "supported",
+    })
+    expect(backend.contractError("prompt.submit", state)).toBeNull()
     expect(cap).toMatchObject({
       sessionConnected: true,
       metadataHydrated: true,
       minContract: 4,
-      maxContract: 5,
-      observedContract: 4,
+      maxContract: 6,
+      observedContract: 6,
       contractSupported: true,
       contractReason: "supported",
       canSubmitPrompt: true,
@@ -64,10 +72,10 @@ describe("backend contract", () => {
   })
 
   test("newer producer contract is surfaced as unsupported", () => {
-    const state = info(6)
+    const state = info(7)
 
     expect(state).toMatchObject({
-      observedContract: 6,
+      observedContract: 7,
       supported: false,
       reason: "newer",
     })

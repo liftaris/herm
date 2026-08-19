@@ -11,7 +11,8 @@ import { encode } from "../utils/unicode"
 
 const LOG_MAX = 200
 const LOG_PREVIEW = 240
-const STARTUP_MS = 15_000
+const LOCAL_STARTUP_MS = 35_000
+const WEBSOCKET_STARTUP_MS = 15_000
 const REQUEST_MS = 120_000
 const WS_CONNECTING = 0
 const WS_OPEN = 1
@@ -337,7 +338,7 @@ export class GatewayClient extends EventEmitter {
       try { ws.close() } catch {}
       if (this.sub) this.emit("exit", null)
       else this.exit = null
-    }, STARTUP_MS)
+    }, WEBSOCKET_STARTUP_MS)
 
     ws.addEventListener("message", event => {
       if (this.ws !== ws) return
@@ -420,7 +421,7 @@ export class GatewayClient extends EventEmitter {
         if (this.sub) this.emit("exit", null)
         else this.exit = null
       }
-    }, STARTUP_MS)
+    }, LOCAL_STARTUP_MS)
 
     const proc = (() => {
       try {
