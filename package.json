@@ -30,6 +30,8 @@
     "dev:full": "PERF=1 CONTROL=1 bun run --watch src/index.tsx",
     "gen-schema": "bun scripts/gen-schema.ts",
     "gen-schema:check": "bun scripts/gen-schema.ts --check",
+    "gen-session-scope": "bun scripts/gen-session-scope.ts --agent ${HERMES_AGENT_ROOT:-$HOME/.hermes/hermes-agent}",
+    "gen-session-scope:check": "bun scripts/gen-session-scope.ts --agent ${HERMES_AGENT_ROOT:-$HOME/.hermes/hermes-agent} --check",
     "gen-hermes-manifest": "bun scripts/gen-hermes-manifest.ts",
     "gen-hermes-manifest:check": "bun scripts/gen-hermes-manifest.ts --check",
     "config-drift": "bun scripts/config-drift.ts",
