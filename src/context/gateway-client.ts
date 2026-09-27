@@ -7,6 +7,7 @@ import { resolve, delimiter } from "path"
 import { existsSync } from "fs"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
 import { backend } from "./backend-contract"
+import { sessionScope } from "./session-scope"
 import { encode } from "../utils/unicode"
 
 const LOG_MAX = 200
@@ -515,9 +516,7 @@ export class GatewayClient extends EventEmitter {
 
     const rid = `r${++this.id}`
     const writer = stdin as { write(data: string | Uint8Array): number }
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
+    const merged = sessionScope.merge(method, this.sid, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -553,9 +552,7 @@ export class GatewayClient extends EventEmitter {
       this.start()
 
     const rid = `r${++this.id}`
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
+    const merged = sessionScope.merge(method, this.sid, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
