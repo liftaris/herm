@@ -25,7 +25,7 @@ describe("config/index", () => {
     const fs = buildFields({})
     expect(fs.find(x => x.key === "terminal.docker_volumes")!.type).toBe("readonly")
     expect(fs.find(x => x.key === "providers")!.type).toBe("readonly")
-    expect(fs.find(x => x.key === "agent.max_turns")!.type).toBe("number")
+    expect(fs.find(x => x.key === "agent.gateway_timeout")!.type).toBe("number")
   })
 
   test("tool progress offers only live TUI modes", () => {

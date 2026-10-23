@@ -21,9 +21,7 @@ type Gw = {
 // so herm and the webui read the same top-to-bottom.
 export const AUX_TASKS = [
   { key: "vision",           label: "Vision",         hint: "Image analysis" },
-  { key: "web_extract",      label: "Web Extract",    hint: "Page summarization" },
   { key: "compression",      label: "Compression",    hint: "Context compaction" },
-  { key: "session_search",   label: "Session Search", hint: "Recall queries" },
   { key: "skills_hub",       label: "Skills Hub",     hint: "Skill search" },
   { key: "approval",         label: "Approval",       hint: "Smart auto-approve" },
   { key: "mcp",              label: "MCP",            hint: "MCP tool routing" },
@@ -48,7 +46,7 @@ const dig = (o: unknown, ...path: string[]): unknown =>
 
 const str = (v: unknown) => typeof v === "string" ? v : ""
 
-/** Project config.yaml → 1 main + 12 aux slots. */
+/** Project config.yaml → the main slot plus one slot per AUX_TASKS entry. */
 export const readSlots = (raw: Record<string, unknown>): Slot[] => {
   const main: Slot = {
     kind: "main", key: "main", label: "Main model", hint: "Primary agent model",

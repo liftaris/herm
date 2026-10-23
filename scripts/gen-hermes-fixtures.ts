@@ -68,6 +68,7 @@ const values: Record<string, unknown> = {
   model: "fixture-model",
   provider: "fixture-provider",
   reasoning_effort: "medium",
+  reasoning_effort_wire: "medium",
   service_tier: "standard",
   fast: false,
   yolo: false,
@@ -79,6 +80,8 @@ const values: Record<string, unknown> = {
   project: { id: "p_fixture", slug: "fixture", name: "Fixture", primary_path: "/fixture/project" },
   personality: "default",
   running: false,
+  turn_started_at: null,
+  terminal_backend: "local",
   title: "Fixture Session",
   stored_session_id: sid,
   desktop_contract: manifest.session.desktopContract,
@@ -120,7 +123,7 @@ const session = sort({
   frame: frame("session.info", info),
 })
 const events = sort({
-  metadata: meta("gateway-events", ["tui_gateway/entry.py", "tui_gateway/server.py", "tui_gateway/ws.py"]),
+  metadata: meta("gateway-events", ["tui_gateway/contracts/events.py", "tui_gateway/entry.py", "tui_gateway/ws.py"]),
   frames: [
     ready,
     frame("session.info", info),
@@ -130,7 +133,7 @@ const events = sort({
   ],
 })
 const cfg = sort({
-  metadata: meta("config", ["hermes_cli/config.py", "tui_gateway/server.py"]),
+  metadata: meta("config", ["hermes_cli/config_defaults.py", "tui_gateway/server.py"]),
   canonical: {
     approval_modes: schema.APPROVAL_MODES,
     approval_mode: schema.SCHEMA["approvals.mode"]?.default,

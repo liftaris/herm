@@ -15,73 +15,32 @@ const run = async (root: string, args: string[]) => {
   return { code, err }
 }
 
-const server = `_methods = {}
-DESKTOP_BACKEND_CONTRACT = 4
-
-
-def write_json(obj):
-    if obj.get("method") == "event":
-        pass
-
-
-def _event_frame(event, sid, payload=None):
-    params = {"type": event, "session_id": sid}
-    return {"jsonrpc": "2.0", "method": "event", "params": params}
-
-
-def _emit(event, sid, payload=None):
-    write_json(_event_frame(event, sid, payload))
-
-
-def _block(event, sid, payload, timeout=300):
-    _emit(event, sid, payload)
-
-
-def method(name: str):
-    def dec(fn):
-        _methods[name] = fn
-        return fn
-    return dec
-
-
-def handle_request(req):
-    method = req.get("method")
-    fn = _methods.get(method)
-    return fn(None, {})
-
-
-def _projects_method(name: str):
-    def decorator(fn):
-        @method(name)
-        def handler(rid, params):
-            return fn(rid, params, None, None)
-        return handler
-    return decorator
+const server = `DESKTOP_BACKEND_CONTRACT = 4
 
 
 def _session_info(session):
     info = {"stored_session_id": "fixture", "desktop_contract": DESKTOP_BACKEND_CONTRACT}
     info["version"] = "fixture"
     return info
+`
 
+const registry = `def method(name, *, params, result): ...\ndef event(name, payload=None, *, doc=""): ...\n`
 
-_TUI_EXTRA: list[tuple[str, str, str]] = [
+const contracts = `method("session.create", params=None, result=None)
+method("projects.list", params=None, result=None)
+event("message.start")
+event("gateway.ready")
+for _name, _doc in (("subagent.start", "start"), ("subagent.complete", "done")):
+    event(_name, doc=_doc)
+`
+
+const discovery = `_TUI_EXTRA: list[tuple[str, str, str]] = [
     ("/sessions", "Switch sessions", "TUI"),
 ]
-
-
-@method("session.create")
-def one(rid, params):
-    _emit("message.start", "s")
-    _block("clarify.request", "s", {})
-
-
-@_projects_method("projects.list")
-def two(rid, params, pdb, conn):
-    return {}
 `
 
 const commands = `from dataclasses import dataclass
+from hermes_constants import STYLES
 
 
 @dataclass(frozen=True)
@@ -99,20 +58,27 @@ class CommandDef:
 
 COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("sessions", "Browse sessions", "Session"),
+    CommandDef("indicator", "Pick a style", "Configuration", args_hint=f"[{'|'.join(STYLES)}]", subcommands=STYLES),
 ]
 `
 
-const prep = (source = server) => {
+const prep = (files: Record<string, string> = {}) => {
   const root = mkdtempSync(join(tmpdir(), "herm-manifest-"))
   const agent = join(root, "agent")
-  mkdirSync(join(agent, "tui_gateway"), { recursive: true })
+  mkdirSync(join(agent, "tui_gateway", "contracts"), { recursive: true })
   mkdirSync(join(agent, "hermes_cli"), { recursive: true })
-  mkdirSync(join(agent, "tools"), { recursive: true })
-  writeFileSync(join(agent, "tui_gateway", "server.py"), source)
-  writeFileSync(join(agent, "tui_gateway", "entry.py"), `write_json({"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {"skin": resolve_skin()}}})\n`)
-  writeFileSync(join(agent, "tui_gateway", "ws.py"), `await transport.write({"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {"skin": server.resolve_skin()}}})\n`)
-  writeFileSync(join(agent, "hermes_cli", "commands.py"), commands)
-  writeFileSync(join(agent, "tools", "delegate_tool.py"), `_relay("subagent.start")\n_relay("subagent.complete")\n`)
+  const all: Record<string, string> = {
+    "hermes_constants.py": `STYLES: tuple[str, ...] = ("ascii", "emoji")\n`,
+    "hermes_cli/commands.py": commands,
+    "tui_gateway/server.py": server,
+    "tui_gateway/command_discovery.py": discovery,
+    "tui_gateway/contracts/registry.py": registry,
+    "tui_gateway/contracts/sessions.py": contracts,
+    "tui_gateway/entry.py": `write_json({"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {"skin": resolve_skin()}}})\n`,
+    "tui_gateway/ws.py": `await transport.write({"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {"skin": server.resolve_skin()}}})\n`,
+    ...files,
+  }
+  for (const [name, body] of Object.entries(all)) writeFileSync(join(agent, name), body)
   const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: agent })
   expect(git("init", "-q").exitCode).toBe(0)
   expect(git("add", ".").exitCode).toBe(0)
@@ -130,6 +96,7 @@ const rows = {
   "rpc:projects.list": { classification: "missing", rationale: "fixture gap" },
   "rpc:session.create": { classification: "covered.rpc", rationale: "structured session RPC" },
   "slash:sessions": { classification: "covered.local", rationale: "tab route" },
+  "slash:indicator": { classification: "unsupported.intentional", rationale: "fixture" },
   "slash-extra:sessions": { classification: "covered.local", rationale: "TUI extra" },
   "slash-dynamic:quick_commands": { classification: "covered.slash_gateway", rationale: "runtime class" },
   "slash-dynamic:skills": { classification: "covered.slash_gateway", rationale: "runtime class" },
@@ -159,7 +126,9 @@ describe("Hermes producer manifest generator", () => {
       expect(text).toContain('"session.create"')
       expect(text).toContain('"projects.list"')
       expect(text).toContain('"message.start"')
+      expect(text).toContain('"subagent.complete"')
       expect(text).toContain('"slash:sessions"')
+      expect(text).toContain('"argsHint":"[ascii|emoji]"')
       expect(text).toContain('"desktopContract": 4')
       expect(text).toContain('"stored_session_id"')
       expect((await run(root, ["--check", "--out", one, "--overlay", policy])).code).toBe(0)
@@ -186,7 +155,7 @@ describe("Hermes producer manifest generator", () => {
   })
 
   test("fails closed on duplicate RPC methods", async () => {
-    const root = prep(`${server}\n@method("session.create")\ndef duplicate(rid, params):\n    return {}\n`)
+    const root = prep({ "tui_gateway/contracts/more.py": `method("session.create", params=None, result=None)\n` })
     try {
       const res = await run(root, ["--out", join(root, "out.ts"), "--overlay", overlay(root, rows)])
       expect(res.code).toBe(1)
@@ -196,23 +165,23 @@ describe("Hermes producer manifest generator", () => {
     }
   })
 
-  test("fails closed on unknown dynamic event sources", async () => {
-    const root = prep(`${server}\ndef bad(name):\n    _emit(name, "s")\n`)
+  test("fails closed on non-literal contract names", async () => {
+    const root = prep({ "tui_gateway/contracts/more.py": `event(some_name)\n` })
     try {
       const res = await run(root, ["--out", join(root, "out.ts"), "--overlay", overlay(root, rows)])
       expect(res.code).toBe(1)
-      expect(res.err).toContain("event argument must be a literal")
+      expect(res.err).toContain("contract name must be a literal")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test("fails closed when registry dispatch shape moves", async () => {
-    const root = prep(server.replace("fn = _methods.get(method)", "fn = routes.get(method)"))
+  test("fails closed when the contract registry shape moves", async () => {
+    const root = prep({ "tui_gateway/contracts/registry.py": `def declare(name): ...\n` })
     try {
       const res = await run(root, ["--out", join(root, "out.ts"), "--overlay", overlay(root, rows)])
       expect(res.code).toBe(1)
-      expect(res.err).toContain("_methods.get(method)")
+      expect(res.err).toContain("missing def method")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

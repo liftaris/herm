@@ -8,7 +8,7 @@
         "branch": "fixture-branch",
         "credential_warning": null,
         "cwd": "/fixture/project",
-        "desktop_contract": 4,
+        "desktop_contract": 8,
         "fast": false,
         "mcp_servers": [],
         "model": "fixture-model",
@@ -22,6 +22,7 @@
         },
         "provider": "fixture-provider",
         "reasoning_effort": "medium",
+        "reasoning_effort_wire": "medium",
         "release_date": "1970-01-01",
         "running": false,
         "service_tier": "standard",
@@ -35,6 +36,7 @@
         },
         "stored_session_id": "session-fixture-0001",
         "system_prompt": "fixture system prompt",
+        "terminal_backend": "local",
         "title": "Fixture Session",
         "tools": {
           "core": [
@@ -45,6 +47,7 @@
             "kanban_show"
           ]
         },
+        "turn_started_at": null,
         "update_behind": null,
         "update_command": "",
         "usage": {
@@ -71,6 +74,6 @@
     "source_files": [
       "tui_gateway/server.py"
     ],
-    "source_revision": "4da7b9ee029c6ece2eb7992fc27dbcd086982c84"
+    "source_revision": "c78ca093aa4b6759c055c3ed2bfbe7f741cf0292"
   }
 }

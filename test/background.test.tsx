@@ -26,15 +26,15 @@ describe("background/btw completion", () => {
     t.destroy()
   })
 
-  test("/background register → start line + titled assistant completion", async () => {
+  test("/bg register → start line + titled assistant completion", async () => {
     const gw = new MockGateway({
-      "commands.catalog": () => ({ pairs: [["/background", "run in background"]] }),
+      "commands.catalog": () => ({ pairs: [["/bg", "run in background"]] }),
       "prompt.background": () => ({ task_id: "bg-42" }),
     })
     const t = await mount({ gw })
     await until(t, () => t.frame().includes("Ready"))
 
-    await act(async () => { await t.keys.typeText("/background do the thing") })
+    await act(async () => { await t.keys.typeText("/bg do the thing") })
     act(() => t.keys.pressEnter())
     await until(t, () => t.gw.last("prompt.background") !== undefined)
     expect(t.gw.last("prompt.background")?.params).toMatchObject({ session_id: "test-sid", text: "do the thing" })

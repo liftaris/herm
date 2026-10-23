@@ -61,14 +61,14 @@ describe("live session event routing", () => {
 
   test("sibling background completion clears badge without writing into active transcript", async () => {
     const gw = new MockGateway({
-      "commands.catalog": () => ({ pairs: [["/background", "run in background"]] }),
+      "commands.catalog": () => ({ pairs: [["/bg", "run in background"]] }),
       "prompt.background": () => ({ task_id: "bg-42" }),
       "session.resume": p => ({ session_id: p.session_id, messages: [] }),
     })
     const t = await mount({ gw, launch: { mode: "resume", sid: "sid-b", splash: false } })
     await until(t, () => t.frame().includes("Ready"))
 
-    await act(async () => { await t.keys.typeText("/background do the thing") })
+    await act(async () => { await t.keys.typeText("/bg do the thing") })
     act(() => t.keys.pressEnter())
     await until(t, () => t.frame().includes("▶ 1"))
 

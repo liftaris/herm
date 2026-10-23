@@ -73,7 +73,7 @@ export function fallbacks(): ReadonlyArray<SlashCommand> {
 
 // These arrive from the gateway catalog but still execute in-process because
 // they mutate live TUI/session state that slash.exec cannot own.
-const INTERCEPT = ["save", "resume", "model", "copy", "paste", "image", "background", "mouse", "redraw"]
+const INTERCEPT = ["save", "resume", "model", "copy", "paste", "image", "bg", "mouse", "redraw"]
 
 /** Commands handled locally by app/slash.tsx and never forwarded to slash.exec. */
 export const LOCAL_NAMES = new Set([

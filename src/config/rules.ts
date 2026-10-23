@@ -70,7 +70,6 @@ export const RULES: Record<string, Rule> = {
   "delegation.child_timeout_seconds": nonNeg,
   "browser.command_timeout": int(1, 600),
   "approvals.timeout": int(1, 3600),
-  "security.tirith_timeout": int(1, 120),
 
   // retries / limits
   "agent.api_max_retries": int(0, 20),

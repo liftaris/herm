@@ -461,8 +461,8 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
               : toast.show({ variant: "warning", message: r.message ?? "attach failed" }))
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
-        case "background":
-          if (!arg) { x.dispatch({ kind: "system", text: "/background <prompt>" }); return }
+        case "bg":
+          if (!arg) { x.dispatch({ kind: "system", text: "/bg <prompt>" }); return }
           gw.request<{ task_id?: string }>(
             "prompt.background",
             x.sid ? { session_id: x.sid, text: arg } : { text: arg },
