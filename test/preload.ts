@@ -73,6 +73,9 @@ afterEach(async () => {
   const prefs = await import("../src/context/preferences")
   prefs.reset()
   rmSync(join(cfg, "tui.json"), { force: true })
+  // Installed eikons live on disk under HERMES_HOME; without this the
+  // Gallery lists whatever earlier tests and files seeded.
+  rmSync(join(root, "hermes", "eikons"), { recursive: true, force: true })
 })
 
 // AnimatedAvatar ticks via setTimeout outside act() — harmless, but noisy.
