@@ -10,7 +10,8 @@ const canary = join(root, "scripts/current-hermes-canary.ts")
 const writeAgent = (dir: string, turns: number) => {
   mkdirSync(join(dir, "hermes_cli"), { recursive: true })
   mkdirSync(join(dir, "tui_gateway"), { recursive: true })
-  writeFileSync(join(dir, "hermes_cli/config.py"), `DEFAULT_CONFIG = {
+  writeFileSync(join(dir, "hermes_cli/config_providers.py"), "")
+  writeFileSync(join(dir, "hermes_cli/config_defaults.py"), `DEFAULT_CONFIG = {
     "agent": {
         # Maximum turns in one session.
         "max_turns": ${turns},
@@ -27,7 +28,7 @@ const fixture = () => {
   const agent = join(dir, "agent")
   writeAgent(agent, 90)
   expect(git(agent, "init", "-q").exitCode).toBe(0)
-  expect(git(agent, "add", "hermes_cli/config.py", "tui_gateway/server.py").exitCode).toBe(0)
+  expect(git(agent, "add", "hermes_cli/config_defaults.py", "hermes_cli/config_providers.py", "tui_gateway/server.py").exitCode).toBe(0)
   expect(git(agent, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture").exitCode).toBe(0)
   return { dir, agent }
 }

@@ -70,11 +70,8 @@ const commands = Object.fromEntries(surface.producers.filter(row => row.kind !==
   return [id, entry]
 })) as Record<string, Omit<Producer, "id">>
 const ids = [...methods.map(name => `rpc:${name}`), ...Object.keys(commands)].sort()
-const rpc = Object.fromEntries(surface.methods.map(row => [row.name, { line: row.line, kind: row.kind }]))
-const eventSources = Object.fromEntries(events.map(name => [
-  name,
-  surface.events.filter(row => row.name === name).map(row => ({ path: row.path, line: row.line, kind: row.kind })),
-]))
+const source = (rows: { name: string; path: string; line: number }[]) =>
+  Object.fromEntries(rows.map(row => [row.name, { path: row.path, line: row.line }]))
 
 const manifest = {
   provenance: {
@@ -87,14 +84,12 @@ const manifest = {
   gateway: {
     rpc: {
       methods,
-      sourceFile: "tui_gateway/server.py",
-      sources: rpc,
+      sources: source(surface.methods),
       diff: diff(methods, localMethods),
     },
     events: {
       names: events,
-      sources: eventSources,
-      coveredDynamicSources: surface.dynamic,
+      sources: source(surface.events),
       diff: diff(events, local.events),
     },
   },

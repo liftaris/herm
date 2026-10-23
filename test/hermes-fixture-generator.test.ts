@@ -43,41 +43,18 @@ const run = async (root: string, args: string[] = [], agent = join(root, "agent"
 const write = (root: string) => {
   const dir = join(root, "agent")
   mkdirSync(join(dir, "hermes_cli"), { recursive: true })
-  mkdirSync(join(dir, "tui_gateway"), { recursive: true })
-  writeFileSync(join(dir, "hermes_cli", "config.py"), `DEFAULT_CONFIG = {
+  mkdirSync(join(dir, "tui_gateway", "contracts"), { recursive: true })
+  writeFileSync(join(dir, "hermes_constants.py"), "")
+  writeFileSync(join(dir, "hermes_cli", "config_providers.py"), "")
+  writeFileSync(join(dir, "hermes_cli", "config_defaults.py"), `DEFAULT_CONFIG = {
     "agent": {"gateway_timeout": 42},
     "approvals": {"mode": "smart"},
 }
 `)
   writeFileSync(join(dir, "hermes_cli", "commands.py"), `COMMAND_REGISTRY = []\n`)
-  writeFileSync(join(dir, "tui_gateway", "server.py"), `_methods = {}
-DESKTOP_BACKEND_CONTRACT = 7
+  writeFileSync(join(dir, "tui_gateway", "command_discovery.py"), `_TUI_EXTRA: list[tuple[str, str, str]] = []\n`)
+  writeFileSync(join(dir, "tui_gateway", "server.py"), `DESKTOP_BACKEND_CONTRACT = 7
 _APPROVAL_MODES = frozenset({"manual", "smart", "off"})
-_TUI_EXTRA: list[tuple[str, str, str]] = []
-
-def write_json(obj):
-    if obj.get("method") == "event":
-        pass
-
-def _event_frame(event: str, sid: str, payload: dict | None = None) -> dict:
-    params: dict = {"type": event, "session_id": sid}
-    if payload is not None:
-        params["payload"] = payload
-    return {"jsonrpc": "2.0", "method": "event", "params": params}
-
-def _emit(event, sid, payload=None):
-    write_json(_event_frame(event, sid, payload))
-
-def method(name):
-    def dec(fn):
-        _methods[name] = fn
-        return fn
-    return dec
-
-def handle_request(req):
-    method = req.get("method")
-    fn = _methods.get(method)
-    return fn(None, {})
 
 def _session_info(agent, session=None):
     info: dict = {
@@ -88,15 +65,11 @@ def _session_info(agent, session=None):
     }
     info["version"] = ""
     return info
-
-@method("session.create")
-def create(rid, params):
-    _emit("message.start", "fixture")
-    _emit("session.info", "fixture")
-    _emit("status.update", "fixture")
-    _emit("tool.start", "fixture")
-    _emit("tool.complete", "fixture")
-    return {}
+`)
+  writeFileSync(join(dir, "tui_gateway", "contracts", "registry.py"), `def method(name, *, params, result): ...\ndef event(name, payload=None, *, doc=""): ...\n`)
+  writeFileSync(join(dir, "tui_gateway", "contracts", "sessions.py"), `method("session.create", params=None, result=None)
+for _name, _doc in (("gateway.ready", ""), ("session.info", ""), ("status.update", ""), ("tool.start", ""), ("tool.complete", "")):
+    event(_name, doc=_doc)
 `)
   writeFileSync(join(dir, "tui_gateway", "entry.py"), `def main():
     write_json({
