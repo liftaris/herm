@@ -133,7 +133,7 @@ describe("Config → models category", () => {
       "cli.exec": (p) => { cli.push(p.argv as string[]); return { code: 0, output: "" } },
     })
     const t = await mountNode(<Config focused />, { gw, width: 160, height: 40 })
-    await until(t, () => t.frame().includes("models (13)"))
+    await until(t, () => t.frame().includes(`models (${AUX_TASKS.length + 1})`))
     act(() => t.keys.pressArrow("down"))
     act(() => t.keys.pressTab())
     act(() => t.keys.pressEnter())
@@ -163,7 +163,7 @@ describe("Config → models category", () => {
       "config.set": () => gate,
     })
     const t = await mountNode(<Config focused />, { gw, width: 160, height: 40 })
-    await until(t, () => t.frame().includes("models (13)"))
+    await until(t, () => t.frame().includes(`models (${AUX_TASKS.length + 1})`))
     act(() => t.keys.pressArrow("down"))
     act(() => t.keys.pressTab())
     act(() => t.keys.pressEnter())

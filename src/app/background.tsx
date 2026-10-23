@@ -1,4 +1,4 @@
-// In-flight /background task ids. Registered on prompt.background,
+// In-flight /bg task ids. Registered on prompt.background,
 // unregistered on background.complete.
 
 import { createContext, useCallback, useMemo, useState, type ReactNode } from "react"
