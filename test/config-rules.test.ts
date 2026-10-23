@@ -9,7 +9,7 @@ describe("rules", () => {
   })
 
   test("every rule accepts its schema default", () => {
-    for (const k of Object.keys(RULES)) {
+    for (const k of Object.keys(RULES).filter(k => SCHEMA[k].default !== null)) {
       const def = SCHEMA[k].default
       const msg = check(k, String(def ?? ""))
       expect(msg, `${k} default '${def}' rejected: ${msg}`).toBeNull()

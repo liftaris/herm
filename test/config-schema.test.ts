@@ -8,7 +8,7 @@ describe("schema", () => {
 
   test("known keys carry the right type", () => {
     const expect_: Record<string, ConfigSchemaEntry["type"]> = {
-      "agent.max_turns": "int",
+      "agent.gateway_timeout": "int",
       "compression.threshold": "float",
       "terminal.docker_volumes": "list",
       "display.show_reasoning": "bool",

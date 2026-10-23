@@ -14,9 +14,9 @@
     "kind": "config",
     "producer_manifest": "src/compat/hermes-manifest.ts",
     "source_files": [
-      "hermes_cli/config.py",
+      "hermes_cli/config_defaults.py",
       "tui_gateway/server.py"
     ],
-    "source_revision": "4da7b9ee029c6ece2eb7992fc27dbcd086982c84"
+    "source_revision": "c78ca093aa4b6759c055c3ed2bfbe7f741cf0292"
   }
 }
