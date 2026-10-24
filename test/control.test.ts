@@ -213,3 +213,22 @@ test("GET /quit clears the terminal title before scheduling exit", async () => {
     timer.mockRestore()
   }
 })
+
+test("terminal-title failure reaches the control caller unchanged", async () => {
+  const error = new Error("terminal title write denied")
+  setBridge({
+    tab: () => 0, setTab: () => {}, send: async () => {},
+    ready: () => true, streaming: () => false, messages: () => 0,
+    session: () => "sid", input: () => "", setInput: () => {},
+    focusRegion: () => "input", setFocusRegion: () => {},
+    renderer: () => ({ setTerminalTitle: () => { throw error } }),
+    logs: () => "", plugin: async () => true, push: () => {},
+  })
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(Object.assign(
+    () => { throw new Error("unexpected exit scheduled") },
+    { __promisify__: setTimeout.__promisify__ },
+  ))
+  try {
+    await expect(internals.handle(new Request("http://localhost/quit"))).rejects.toBe(error)
+  } finally { timer.mockRestore() }
+})

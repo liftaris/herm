@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
+import { homedir } from "node:os"
 import { createHash } from "node:crypto"
 import { runtimeDescriptor, type Catalog } from "eikon"
 import * as market from "../src/service/eikon-marketplace"
@@ -8,7 +9,7 @@ import { eikon } from "../src/service/eikon"
 import * as prefs from "../src/context/preferences"
 
 const HH = process.env.HERMES_HOME!
-if (!HH || HH.includes("/.hermes")) throw new Error("sandbox not applied")
+if (!HH || resolve(HH) === resolve(join(homedir(), ".hermes"))) throw new Error("sandbox not applied")
 const legacy = readFileSync(join(import.meta.dir, "fixtures/eikon/mono-v1.6.0-extract.eikon"), "utf8")
 
 const launch = [

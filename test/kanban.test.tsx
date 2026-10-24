@@ -1733,10 +1733,10 @@ describe("diagnostics parser", () => {
     expect(d.actions[1].suggested).toBe(false)
   })
 
-  test("parseDiagnostics() returns [] on empty/invalid/bad-JSON input", () => {
+  test("diagnostics permits empty input but reports malformed JSON", () => {
     expect(parseDiagnostics("")).toEqual([])
     expect(parseDiagnostics("[]")).toEqual([])
-    expect(parseDiagnostics("not json")).toEqual([])
+    expect(() => parseDiagnostics("not json")).toThrow(SyntaxError)
     expect(parseDiagnostics("{}")).toEqual([])
   })
 

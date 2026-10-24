@@ -59,9 +59,8 @@ export function clear(): void {
   acc.clear()
 }
 
-/** Persist the turn's tree (best-effort) and clear the accumulator. */
-export function flush(gw: Gateway, sessionId: string): void {
-  if (acc.size === 0) return
+export function flush(gw: Gateway, sessionId: string): Promise<unknown> {
+  if (acc.size === 0) return Promise.resolve()
   const subagents = [...acc.values()]
   acc.clear()
 
@@ -69,11 +68,11 @@ export function flush(gw: Gateway, sessionId: string): void {
   const label = (roots.slice(0, 2).map(s => s.goal).join(" · ") || `${subagents.length} subagents`).slice(0, 120)
   const started = Math.min(...subagents.map(s => s.started_at))
 
-  gw.request("spawn_tree.save", {
+  return gw.request("spawn_tree.save", {
     session_id: sessionId,
     label,
     started_at: started,
     finished_at: Date.now() / 1000,
     subagents,
-  }).catch(() => {})
+  })
 }

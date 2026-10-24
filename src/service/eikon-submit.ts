@@ -62,8 +62,6 @@ export type PreparedSubmit = SubmitPreview & {
 export type Submit = (input: PreparedSubmit) => Promise<SubmitResult>
 export type PublishedInfo = { source: string }
 
-type Head = { name?: unknown; title?: unknown; author?: unknown; glyph?: unknown }
-
 export function submitPath(name: string) {
   return file(name)
 }
@@ -82,7 +80,9 @@ export function publishedInfo(path: string): PublishedInfo | undefined {
     const origin = man.origin as Record<string, unknown> | undefined
     const src = origin?.source ?? man.sourceUrl ?? man.source_url
     if (typeof src === "string" && src.trim()) return { source: src }
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   return undefined
 }
 
@@ -95,14 +95,12 @@ export function failureText(xs: SubmitFailure[]) {
 }
 
 export async function defaults(input: { path: string }): Promise<SubmitMeta> {
-  let bundle: SubmitBundle | undefined
-  try { bundle = await previewSubmitBundle({ path: input.path }) } catch {}
-  const meta = bundle?.meta as Head | undefined
-  const name = typeof meta?.name === "string" ? meta.name : basename(input.path).replace(/\.eikon$/i, "")
-  const author = authorName(meta?.author) ?? await ghUser() ?? process.env.USER ?? "unknown"
-  const glyph = typeof meta?.glyph === "string" && meta.glyph.trim() ? meta.glyph.trim() : "◆"
+  const bundle = await previewSubmitBundle({ path: input.path })
+  const meta = bundle.meta
+  const author = authorName(meta.author) ?? await ghUser() ?? process.env.USER ?? "unknown"
+  const glyph = typeof meta.glyph === "string" && meta.glyph.trim() ? meta.glyph.trim() : "◆"
   return {
-    title: typeof meta?.title === "string" && meta.title.trim() ? meta.title.trim() : name,
+    title: typeof meta.title === "string" && meta.title.trim() ? meta.title.trim() : meta.name,
     author,
     description: "Monochrome terminal avatar.",
     glyph,
@@ -238,8 +236,8 @@ function repo(value: string) {
 function unsafeUrl(value: string) {
   const matches = value.match(/\b(?:https?|file|data|javascript):[^\s]+/gi) ?? []
   return matches.some(raw => {
-    let url: URL
-    try { url = new URL(raw) } catch { return false }
+    const url = URL.parse(raw)
+    if (!url) return false
     if (url.protocol !== "http:" && url.protocol !== "https:") return true
     return privateHost(url.hostname)
   })
@@ -301,7 +299,8 @@ async function ghUser() {
     const p = Bun.spawn(["gh", "api", "user", "-q", ".login"], { stdout: "pipe", stderr: "pipe" })
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited])
     return code === 0 && out.trim() ? out.trim() : undefined
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return undefined
   }
 }

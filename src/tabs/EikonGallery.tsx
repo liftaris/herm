@@ -88,7 +88,7 @@ export const EikonGallery = memo((props: Props) => {
   const cur = rows[sel]
   const parsed = useMemo<ParsedEikon | undefined>(() => {
     if (!cur) return undefined
-    try { return parseEikonFile(cur.path) } catch { return undefined }
+    return parseEikonFile(cur.path)
   }, [cur])
 
   const activate = (row = cur) => {
@@ -187,7 +187,7 @@ export const EikonGallery = memo((props: Props) => {
   useEffect(() => { if (act >= actions.length) setAct(Math.max(0, actions.length - 1)) }, [act, actions.length])
 
   const cards = useMemo<EikonCard[]>(() => rows.map(r => {
-    const p = (() => { try { return parseEikonFile(r.path) } catch { return undefined } })()
+    const p = parseEikonFile(r.path)
     const lines = p?.resolve("state.idle")?.frames[0] ?? p?.states.get("idle")?.frames[0] ?? ["(no preview)"]
     return {
       key: r.path,
@@ -307,16 +307,17 @@ const manifest = (dir: string) => {
   try {
     const raw = JSON.parse(readFileSync(file, "utf8"))
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined
-  } catch { return undefined }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return undefined
+  }
 }
 
 const sourceBadge = (row: Row) => row.hasSource ? "● source" : row.url || row.bundled ? "○ source available" : "— no source"
 
 const key = (value: string) => {
-  try {
-    const url = new URL(value)
-    if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "file:") return url.href.replace(/\/?$/, "/").toLowerCase()
-  } catch {}
+  const url = URL.parse(value)
+  if (url && (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "file:")) return url.href.replace(/\/?$/, "/").toLowerCase()
   return value.toLowerCase()
 }
 

@@ -103,7 +103,9 @@ function manifest(name: string): Record<string, unknown> | undefined {
   try {
     const raw = JSON.parse(readFileSync(p, "utf8"))
     if (raw && typeof raw === "object") return raw as Record<string, unknown>
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   return undefined
 }
 
@@ -204,10 +206,6 @@ function inspectResolved(src: string, r: ResolvedEikon, stat?: { n: number; byte
   return out
 }
 
-function changed(name: string) {
-  try { return dirty(dir(name)) } catch { return false }
-}
-
 export function lifecycle(name: string, opts: { dirty?: boolean } = {}): LifecycleInfo {
   const man = manifest(name)
   const head = header(file(name))
@@ -218,7 +216,7 @@ export function lifecycle(name: string, opts: { dirty?: boolean } = {}): Lifecyc
   const compatibility = OBJ(man?.compatibility) ? man.compatibility : undefined
   const installedAt = originObject(man)?.at
   const hasOrigin = Boolean(src.origin ?? src.packageUrl)
-  const isDirty = opts.dirty !== false && existsSync(dir(name)) ? changed(name) : false
+  const isDirty = opts.dirty !== false && existsSync(dir(name)) ? dirty(dir(name)) : false
   return {
     name,
     ...(title ? { title } : {}),
@@ -248,7 +246,7 @@ export function list(): Installed[] {
     .filter(e => e.isDirectory() && existsSync(join(root, e.name, `${e.name}.eikon`)))
     .map(e => {
       const name = e.name
-      normalizeStoredSources(name)
+      readStudio(name)
       const man = manifest(name)
       const path = join(root, name, `${name}.eikon`)
       return {
@@ -287,7 +285,7 @@ const MEDIA_EXT: Record<string, string> = {
 }
 
 type SourceFile = { path?: string; mediaType?: string }
-type SourceManifest = { files?: SourceFile[] }
+type SourceManifest = { kind?: string; files?: SourceFile[] }
 
 function slot(role: string): role is keyof Sources & string {
   return role === "base" || STATES.includes(role as AvatarState)
@@ -305,14 +303,10 @@ export function sourceName(man: SourceManifest | undefined, role: string, rel: s
 }
 
 function sourceRefs(man: SourceManifest | undefined): Map<string, string> {
-  if (!man) return new Map()
-  try {
-    return new Map(packageEntries(man as never)
-      .filter(([role]) => slot(String(role)))
-      .map(([role, rel]) => [String(role), rel]))
-  } catch {
-    return new Map()
-  }
+  if (man?.kind !== "eikon.package") return new Map()
+  return new Map(packageEntries(man as never)
+    .filter(([role]) => slot(String(role)))
+    .map(([role, rel]) => [String(role), rel]))
 }
 
 function normalizeSources(name: string, sources: Sources): Sources {
@@ -342,10 +336,6 @@ function normalizeStudioSources(name: string, s: Studio): Studio {
   const next = { ...s, sources }
   writeFileSync(studioFile(name), JSON.stringify(next, null, 2) + "\n", "utf8")
   return next
-}
-
-function normalizeStoredSources(name: string): void {
-  try { readStudio(name) } catch {}
 }
 
 export type Sources = Partial<Record<AvatarState | "base", string | null>>
@@ -463,7 +453,10 @@ export function sourceStatus(name: string, state?: AvatarState, opts: { sources?
   const head = header(file(name)) ?? (pack ? header(pack) : undefined)
   const url = sourceUrl(man, head)
   const downloadable = !src && Boolean(url)
-  const size = src?.path ? (() => { try { return statSync(src.path).size } catch { return undefined } })() : undefined
+  const size = src?.path ? (() => { try { return statSync(src.path).size } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return undefined
+  } })() : undefined
   return {
     name,
     state: st,
@@ -494,10 +487,18 @@ export function hasLocalSource(name: string): boolean {
 export function sourceStamp(name: string): string {
   const src = sourceDir(name)
   const stats = [studioFile(name), existsSync(file(name)) ? file(name) : ""].filter(Boolean).map(path => {
-    try { const st = statSync(path); return `${basename(path)}:${st.mtimeMs}:${st.size}` } catch { return `${basename(path)}:missing` }
+    try { const st = statSync(path); return `${basename(path)}:${st.mtimeMs}:${st.size}` }
+    catch (err) {
+      if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      return `${basename(path)}:missing`
+    }
   })
   const media = sourceFiles(name).sort().map(f => {
-    try { const st = statSync(join(src, f)); return `${f}:${st.mtimeMs}:${st.size}` } catch { return `${f}:missing` }
+    try { const st = statSync(join(src, f)); return `${f}:${st.mtimeMs}:${st.size}` }
+    catch (err) {
+      if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      return `${f}:missing`
+    }
   })
   return [...stats, ...media].join("|")
 }

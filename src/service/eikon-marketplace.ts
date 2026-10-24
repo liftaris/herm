@@ -89,20 +89,13 @@ function hash(data: Uint8Array) {
 }
 
 function keyIdentity(s: string) {
-  try {
-    const u = new URL(s)
-    if (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:") return u.href.replace(/\/?$/, "/")
-  } catch {}
-  return s
+  const u = URL.parse(s)
+  return u && (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:") ? u.href.replace(/\/?$/, "/") : s
 }
 
 function manifestBaseKey(s: string) {
-  try {
-    const u = new URL(s)
-    if ((u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:") && u.pathname.endsWith("/manifest.json")) {
-      return new URL(".", u).href
-    }
-  } catch {}
+  const u = URL.parse(s)
+  if (u && (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:") && u.pathname.endsWith("/manifest.json")) return new URL(".", u).href
   return undefined
 }
 
@@ -110,13 +103,9 @@ function registryKey(man: InstalledManifest | undefined, source: string | undefi
   if (man?.kind !== "eikon.package" || typeof man.id !== "string") return undefined
   const sourceKey = man.origin?.sourceKey ?? man.origin?.identityKey
   if (sourceKey) return keyIdentity(sourceKey)
-  try {
-    const host = source ? new URL(source).host : undefined
-    if (!host) return undefined
-    return `registry:${host}:${man.id}${typeof man.version === "string" && man.version ? `@${man.version}` : ""}`
-  } catch {
-    return undefined
-  }
+  const host = source ? URL.parse(source)?.host : undefined
+  if (!host) return undefined
+  return `registry:${host}:${man.id}${typeof man.version === "string" && man.version ? `@${man.version}` : ""}`
 }
 
 function entryKeys(entry: CatalogEntry) {
@@ -148,7 +137,8 @@ function read(path: string): InstalledManifest | undefined {
   try {
     const man = JSON.parse(readFileSync(path, "utf8")) as unknown
     return obj(man) ? man as InstalledManifest : undefined
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return undefined
   }
 }

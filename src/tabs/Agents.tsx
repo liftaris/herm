@@ -353,8 +353,8 @@ export const Agents = memo((props: Props) => {
   useEffect(() => {
     gw.request<{ home?: string }>("config.get", { key: "profile" })
       .then(r => { gwHome.current = r.home })
-      .catch(() => {})
-      .finally(loadProfiles)
+      .then(loadProfiles)
+      .catch((e: Error) => setErr(e.message))
   }, [gw, loadProfiles])
 
   const loadDeleg = useCallback(() => {

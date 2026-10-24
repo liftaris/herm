@@ -110,9 +110,9 @@ describe("openUrl", () => {
     expect(s.calls).toEqual([])
   })
 
-  test("synchronous spawn throw → returns false", () => {
+  test("synchronous opener failure reaches the caller unchanged", () => {
     const s = makeSpawn("linux", { throws: true })
-    expect(openUrl("https://example.com", s)).toBe(false)
+    expect(() => openUrl("https://example.com", s)).toThrow("EINVAL")
   })
 
   test("shell metacharacters in URL pass through argv unescaped", () => {
@@ -127,16 +127,13 @@ describe("openUrl", () => {
     expect(s.calls[0].args[0]).toBe(url)
   })
 
-  test("async 'error' event is absorbed (no throw)", () => {
+  test("asynchronous opener failure is not hidden", () => {
     const s = makeSpawn("linux")
     openUrl("https://example.com", s)
     const child = s.child()
     expect(child).not.toBeNull()
-    expect(child!.listenerCount("error")).toBe(1)
     expect(child!.unrefed).toBe(true)
-    // Emitting error on an EventEmitter with no listener throws; with our
-    // no-op listener it should be absorbed silently.
-    expect(() => child!.emit("error", new Error("ENOENT"))).not.toThrow()
+    expect(() => child!.emit("error", new Error("opener missing"))).toThrow("opener missing")
   })
 
 })

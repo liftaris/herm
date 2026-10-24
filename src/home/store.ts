@@ -114,15 +114,13 @@ const SLICES: Slices = {
     read: () => io.roots(30),
   },
   systemPrompt: {
-    // Older state.db schemas lack the column — degrade to "unknown"
-    // (old readSystemPromptInfo did the same via blanket try/catch).
     read: () => io.systemPrompt().then(r => r && {
       source: makeSource("state.db"),
       sessionId: r.id,
       text: r.text,
       totalChars: r.text.length,
       tokenEstimate: tokenCount(r.text),
-    }).catch(() => null),
+    }),
   },
   toolsInfo: {
     // Optional legacy/debug snapshot fallback. Context prefers live
@@ -202,8 +200,8 @@ export class HomeStore {
       }
       const v = await slice.read(deps)
       if (gen !== this.gen || rev !== (this.rev.get(k) ?? 0)) return v
-      this.data[k] = v
       this.startWatch(k, slice.watch)
+      this.data[k] = v
       this.notify(k)
       return v
     })()
@@ -297,19 +295,13 @@ export class HomeStore {
           dir = p
           name = null
         }
-      } catch {
-        // TOCTOU: file may have been deleted between existsSync and
-        // statSync. Fall through — dir/name already default to the
-        // parent directory, which the watch logic below handles.
+      } catch (err) {
+        if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
       }
       if (!existsSync(dir)) continue
-      try {
-        ws.push(this.watcher(dir, file => {
-          if (name === null || file?.toString() === name) fire()
-        }))
-      } catch {
-        // Unwatchable (permissions, exotic fs). Slice still works; just not reactive.
-      }
+      ws.push(this.watcher(dir, file => {
+        if (name === null || file?.toString() === name) fire()
+      }))
     }
     this.watchers.set(k, ws)
   }

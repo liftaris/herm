@@ -154,14 +154,11 @@ export type TaskDiags = {
 
 const SEV = new Set<Severity>(["warning", "error", "critical"])
 
-/** Parse the CLI's `diagnostics --json` stdout into typed rows. Rejects
- *  malformed payloads silently so a CLI regression doesn't blank the
- *  tab — we'd rather show tasks without badges than crash the board. */
+/** Parse diagnostics rows; malformed JSON throws and empty output yields no rows. */
 export function parseDiagnostics(stdout: string): TaskDiags[] {
   const trimmed = stdout.trim()
   if (!trimmed) return []
-  let raw: unknown
-  try { raw = JSON.parse(trimmed) } catch { return [] }
+  const raw: unknown = JSON.parse(trimmed)
   if (!Array.isArray(raw)) return []
   return raw.flatMap(r => {
     if (!r || typeof r !== "object") return []
@@ -254,7 +251,9 @@ const resolve = (): string => {
   try {
     const txt = readFileSync(kp("kanban/current"), "utf-8").trim().toLowerCase()
     if (SLUG.test(txt)) return txt
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   return DEFAULT
 }
 
@@ -381,7 +380,10 @@ export function corruptBackupsOf(s: string): string[] {
       .filter(e => e.isFile() && CORRUPT_BACKUP.test(e.name))
       .map(e => `${dir}/${e.name}`)
       .sort()
-  } catch { return [] }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return []
+  }
 }
 
 /** Enumerate boards on disk. 'default' always first; others sorted. */
@@ -399,7 +401,9 @@ export function listBoards(): Board[] {
         const n = typeof meta?.name === "string" ? meta.name
           : typeof meta?.display_name === "string" ? meta.display_name : null
         if (n) name = n
-      } catch {}
+      } catch (err) {
+        if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      }
       out.set(e.name, name)
     }
   return [...out].map(([s, n]) => ({ slug: s, name: n }))
@@ -421,10 +425,8 @@ const colsOf = (conn: Database): Set<string> => {
   const cached = cols.get(conn)
   if (cached) return cached
   const set = new Set<string>()
-  try {
-    for (const r of conn.query("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
-      set.add(r.name)
-  } catch {}
+  for (const r of conn.query("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
+    set.add(r.name)
   cols.set(conn, set)
   return set
 }
@@ -461,10 +463,8 @@ const parseKind = (raw: unknown): BlockKind | null =>
 
 const parseSkills = (raw: unknown): string[] => {
   if (typeof raw !== "string" || !raw) return []
-  try {
-    const j = JSON.parse(raw)
-    return Array.isArray(j) ? j.filter((v): v is string => typeof v === "string" && !!v) : []
-  } catch { return [] }
+  const j = JSON.parse(raw)
+  return Array.isArray(j) ? j.filter((v): v is string => typeof v === "string" && !!v) : []
 }
 
 const toTask = (r: Record<string, unknown>): Task => ({
@@ -577,74 +577,61 @@ const EVENT_TAIL = 20
 export function detailOf(s: string, id: string): Detail | null {
   const conn = dbOf(s)
   if (!conn) return null
-  try {
-    const row = conn.query(
-      `SELECT ${taskColumns(colsOf(conn))} FROM tasks WHERE id = ?`,
-    ).get(id) as Record<string, unknown> | null
-    if (!row) return null
-    const parents = (conn.query(
-      "SELECT parent_id FROM task_links WHERE child_id = ?",
-    ).all(id) as Array<{ parent_id: string }>).map(r => r.parent_id)
-    const children = (conn.query(
-      "SELECT child_id FROM task_links WHERE parent_id = ?",
-    ).all(id) as Array<{ child_id: string }>).map(r => r.child_id)
-    const comments = (conn.query(
-      "SELECT author, body, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at",
-    ).all(id) as Array<{ author: string; body: string; created_at: number }>)
-      .map(c => ({ author: c.author, body: c.body, at: c.created_at }))
-    // task_runs / task_events may not exist on ancient DBs; swallow and
-    // return [] so the detail pane keeps working.
-    const runs = runsOf(conn, id)
-    const events = eventsOf(conn, id)
-    const attachments = attachmentsOf(conn, s, id)
-    const latest = latestSummary(conn, id)
-    return {
-      ...toTask(row), parents, children, comments,
-      runs, events, attachments, latest_summary: latest,
-    }
-  } catch { return null }
+  const row = conn.query(
+    `SELECT ${taskColumns(colsOf(conn))} FROM tasks WHERE id = ?`,
+  ).get(id) as Record<string, unknown> | null
+  if (!row) return null
+  const parents = (conn.query(
+    "SELECT parent_id FROM task_links WHERE child_id = ?",
+  ).all(id) as Array<{ parent_id: string }>).map(r => r.parent_id)
+  const children = (conn.query(
+    "SELECT child_id FROM task_links WHERE parent_id = ?",
+  ).all(id) as Array<{ child_id: string }>).map(r => r.child_id)
+  const comments = (conn.query(
+    "SELECT author, body, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at",
+  ).all(id) as Array<{ author: string; body: string; created_at: number }>)
+    .map(c => ({ author: c.author, body: c.body, at: c.created_at }))
+
+  const runs = runsOf(conn, id)
+  const events = eventsOf(conn, id)
+  const attachments = attachmentsOf(conn, s, id)
+  const latest = latestSummary(conn, id)
+  return {
+    ...toTask(row), parents, children, comments,
+    runs, events, attachments, latest_summary: latest,
+  }
 }
 
 const runsOf = (conn: Database, id: string): Run[] => {
-  try {
-    return (conn.query(
-      `SELECT id, profile, status, outcome, started_at, ended_at,
-              summary, error, worker_pid
-       FROM task_runs WHERE task_id = ? ORDER BY id`,
-    ).all(id) as Array<Record<string, unknown>>).map(toRun)
-  } catch { return [] }
+  return (conn.query(
+    `SELECT id, profile, status, outcome, started_at, ended_at,
+            summary, error, worker_pid
+     FROM task_runs WHERE task_id = ? ORDER BY id`,
+  ).all(id) as Array<Record<string, unknown>>).map(toRun)
 }
 
 const eventsOf = (conn: Database, id: string): Event[] => {
-  try {
-    // Newest-20 DESC from SQL, then reverse so callers see chronological
-    // order (matches `hermes kanban show` last-20-events output).
-    const rows = conn.query(
-      `SELECT id, kind, payload, created_at, run_id
-       FROM task_events WHERE task_id = ? ORDER BY id DESC LIMIT ?`,
-    ).all(id, EVENT_TAIL) as Array<Record<string, unknown>>
-    return rows.map(toEvent).reverse()
-  } catch { return [] }
+  const rows = conn.query(
+    `SELECT id, kind, payload, created_at, run_id
+     FROM task_events WHERE task_id = ? ORDER BY id DESC LIMIT ?`,
+  ).all(id, EVENT_TAIL) as Array<Record<string, unknown>>
+  return rows.map(toEvent).reverse()
 }
 
 const attachmentsOf = (conn: Database, s: string, id: string): Attachment[] => {
-  try {
-    return (conn.query(
-      `SELECT id, filename, stored_path, size, created_at
-       FROM task_attachments WHERE task_id = ? ORDER BY created_at ASC, id ASC`,
-    ).all(id) as Array<Record<string, unknown>>).map(r => toAttachment(s, r))
-  } catch { return [] }
+  return (conn.query(
+    `SELECT id, filename, stored_path, size, created_at
+     FROM task_attachments WHERE task_id = ? ORDER BY created_at ASC, id ASC`,
+  ).all(id) as Array<Record<string, unknown>>).map(r => toAttachment(s, r))
 }
 
 const latestSummary = (conn: Database, id: string): string | null => {
-  try {
-    const row = conn.query(
-      `SELECT summary FROM task_runs
-       WHERE task_id = ? AND summary IS NOT NULL AND summary != ''
-       ORDER BY id DESC LIMIT 1`,
-    ).get(id) as { summary: string } | null
-    return row?.summary ?? null
-  } catch { return null }
+  const row = conn.query(
+    `SELECT summary FROM task_runs
+     WHERE task_id = ? AND summary IS NOT NULL AND summary != ''
+     ORDER BY id DESC LIMIT 1`,
+  ).get(id) as { summary: string } | null
+  return row?.summary ?? null
 }
 
 /** Tail of the worker log. Mirrors kanban_db.read_worker_log's
@@ -665,7 +652,10 @@ export function tailLogOf(s: string, id: string, bytes = 16_384): string | null 
       if (nl >= 0 && nl < out.length - 1) out = out.slice(nl + 1)
     }
     return out
-  } catch { return null }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return null
+  }
 }
 
 /** Candidate assignee names — profiles-on-disk ∪ any assignee
@@ -678,11 +668,9 @@ export function assignees(s: string = slug): string[] {
     for (const e of readdirSync(dir, { withFileTypes: true }))
       if (e.isDirectory()) seen.add(e.name)
   const conn = dbOf(s)
-  if (conn) try {
-    for (const r of conn.query(
+  if (conn) for (const r of conn.query(
       "SELECT DISTINCT assignee FROM tasks WHERE assignee IS NOT NULL AND status != 'archived'",
     ).all() as Array<{ assignee: string }>) seen.add(r.assignee)
-  } catch {}
   return [...seen].sort()
 }
 // Scoped to the same field set plugins/kanban/dashboard/plugin_api.py

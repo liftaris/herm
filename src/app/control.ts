@@ -456,7 +456,7 @@ async function handle(req: Request): Promise<Response> {
   // 200 flushes before the process dies.
   if (path === "/quit") {
     const renderer = bridge.renderer() as { setTerminalTitle?: (title: string) => void } | null
-    try { renderer?.setTerminalTitle?.("") } catch {}
+    renderer?.setTerminalTitle?.("")
     setTimeout(() => process.exit(0), 10)
     return json({ ok: true })
   }

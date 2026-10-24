@@ -1,6 +1,7 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, spyOn } from "bun:test"
 import type { ParsedKey, Renderable } from "@opentui/core"
 import { Selection } from "../src/utils/selection"
+import * as clipboard from "../src/utils/clipboard"
 
 const key = (name: string, ctrl = false): ParsedKey =>
   ({ name, ctrl, meta: false, shift: false, option: false, number: false,
@@ -8,7 +9,6 @@ const key = (name: string, ctrl = false): ParsedKey =>
 
 function stub(text: string, focused?: Renderable, inSel: Renderable[] = []) {
   let cleared = false
-  let toasts = 0
   return {
     renderer: {
       getSelection: () => text
@@ -18,12 +18,11 @@ function stub(text: string, focused?: Renderable, inSel: Renderable[] = []) {
       currentFocusedRenderable: focused ?? null,
     },
     toast: {
-      show: () => { toasts++ },
+      show: () => {},
       clear: () => {},
       error: () => {},
     },
     cleared: () => cleared,
-    toasts: () => toasts,
   }
 }
 
@@ -42,9 +41,12 @@ describe("Selection.key", () => {
 
   test("Ctrl+C with selection → yanks + consumes", () => {
     const s = stub("highlighted text")
-    expect(Selection.key(s.renderer, key("c", true), s.toast)).toBe(true)
-    expect(s.cleared()).toBe(true)
-    expect(s.toasts()).toBe(1)
+    const copy = spyOn(clipboard, "copyText").mockResolvedValue()
+    try {
+      expect(Selection.key(s.renderer, key("c", true), s.toast)).toBe(true)
+      expect(s.cleared()).toBe(true)
+      expect(copy).toHaveBeenCalledWith("highlighted text", s.toast)
+    } finally { copy.mockRestore() }
   })
 
   test("other key clears unless selection is inside focused renderable", () => {

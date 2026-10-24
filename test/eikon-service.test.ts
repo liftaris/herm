@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
+import { homedir } from "node:os"
 import { runtimeDescriptor } from "eikon"
 import { eikon } from "../src/service/eikon"
 import { knobs } from "../src/utils/eikon-knobs"
@@ -12,7 +13,7 @@ import * as prefs from "../src/context/preferences"
 import { eikons } from "./fixture/eikon"
 
 const HH = process.env.HERMES_HOME!
-if (!HH || HH.includes("/.hermes")) throw new Error("sandbox not applied")
+if (!HH || resolve(HH) === resolve(join(homedir(), ".hermes"))) throw new Error("sandbox not applied")
 const legacy = readFileSync(join(import.meta.dir, "fixtures/eikon/mono-v1.6.0-extract.eikon"), "utf8")
 const legacyUrl = (JSON.parse(legacy.split("\n")[0]) as { source_url: string }).source_url
 const current = [
@@ -468,16 +469,11 @@ describe("service/eikon: lifecycle", () => {
   })
 
 
-  test("list tolerates corrupt installed manifests", () => {
+  test("list surfaces malformed installed manifests instead of losing their metadata", () => {
     eikon.ensure("corrupt")
     writeFileSync(eikon.file("corrupt"), '{"eikon":1,"name":"corrupt"}\n')
     writeFileSync(join(eikon.dir("corrupt"), "manifest.json"), "{")
-
-    const row = eikon.list().find(x => x.name === "corrupt")!
-
-    expect(row.name).toBe("corrupt")
-    expect(row.manifest).toBeUndefined()
-    expect(row.lifecycle.source.kind).toBe("unknown")
+    expect(() => eikon.list()).toThrow(SyntaxError)
   })
 
   test("packageUrl-only origins are advertised and updateable", async () => {

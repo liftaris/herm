@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useToast } from "../ui/toast"
 import type { Gateway } from "../context/gateway"
 import { parseDiagnostics, q, sortDiags, type Board, type Diag } from "../service/hermes-kanban"
 
@@ -13,6 +14,7 @@ const index = (rows: ReturnType<typeof parseDiagnostics>) => {
 }
 
 export function useKanbanDiagnostics(gw: Gateway) {
+  const toast = useToast()
   const [data, setData] = useState<Map<string, Map<string, Diag[]>>>(() => new Map())
   const state = useRef<State>({ busy: false, pending: null, gen: 0 })
 
@@ -29,8 +31,11 @@ export function useKanbanDiagnostics(gw: Gateway) {
       const pairs = await Promise.all(current.map(async board => {
         const rows = await gw.request<Sh>("shell.exec", {
           command: `hermes kanban --board ${q(board.slug)} diagnostics --json`,
-        }).then(res => res.code === 0 ? index(parseDiagnostics(res.stdout)) : null)
-          .catch(() => null)
+        }).then(res => {
+          if (res.code !== 0) throw new Error(res.stderr || res.stdout || `diagnostics exited with code ${res.code}`)
+          return index(parseDiagnostics(res.stdout))
+        })
+          .catch(err => { toast.error(err); return null })
         return [board.slug, rows] as const
       }))
       if (run.gen === gen) {

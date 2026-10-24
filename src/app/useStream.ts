@@ -113,7 +113,7 @@ export function useStream(c: Ctx) {
         ctx.current.setTitle(r.title ?? "")
         store(r.session_key)
       })
-      .catch(() => {})
+      .catch(err => toast.error(err))
     if (ms <= 0) return run()
     const id = setTimeout(() => {
       timers.current = timers.current.filter(t => t !== id)
@@ -193,13 +193,13 @@ export function useStream(c: Ctx) {
         gw.request<{ value?: string }>("config.get", { key: "busy" }).then(r => {
           const m = r.value
           if (m === "queue" || m === "steer" || m === "interrupt") x.setBusy(m)
-        }).catch(() => {})
+        }).catch(err => toast.error(err))
       },
       onUsage: (u) => x.setUsage(u),
       onTurnComplete: () => {
         x.setStarting(false)
         x.setStatus("")
-        spawnHistory.flush(gw, x.sidRef.current)
+        void spawnHistory.flush(gw, x.sidRef.current).catch(err => toast.error(err))
         x.goalHook.check(x.sidRef.current)
         TITLE_DELAYS.forEach(sync)
       },
