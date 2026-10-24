@@ -19,7 +19,6 @@ import { installReloadSignal } from "./app/reloadSignal";
 import * as preferences from "./context/preferences";
 import { resetTerminalModes, installExitResetHooks } from "./utils/terminal-reset";
 import { clampStdoutDimensions } from "./utils/terminal-size";
-import { warmup as warmTokens } from "./utils/tokens";
 import { prime as primeTheme, DEFAULT_THEME } from "./theme";
 import { resolveProfileHome } from "./service/hermes-profiles";
 import { rehome } from "./home/rehome";
@@ -107,9 +106,6 @@ const main = async () => {
   endRender()
   perf.boot("first-render", Bun.nanoseconds() / 1e6)
 
-  // gpt-tokenizer is ~170ms to import and not needed for first frame;
-  // kick it off the hot path so the first count() call doesn't stall.
-  warmTokens()
   warmIO()
   // First-launch copies only; steady state is two existsSync per
   // bundled skill/plugin. Off the first-render path so a slow fs doesn't

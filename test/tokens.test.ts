@@ -1,47 +1,42 @@
-import { describe, test, expect, beforeEach } from "bun:test"
-import { count, clearCache, formatTokens } from "../src/utils/tokens"
+import { describe, test, expect } from "bun:test"
+import { count, formatTokens } from "../src/utils/tokens"
 
 describe("tokens.count", () => {
-  beforeEach(clearCache)
-
-  test("empty string → 0", () => {
-    expect(count("")).toBe(0)
+  test.each([
+    ["", 0],
+    ["a", 1],
+    ["abcd", 1],
+    ["abcde", 2],
+    ["The quick brown fox jumps over the lazy dog", 11],
+    ["你好世界", 4],
+    ["漢字とかな交じり文です。", 12],
+    ["압축 테스트 " + "가".repeat(1000), 1006],
+    ["hello 안녕 world", 5],
+    ["ｱｲｳｴｵ ﾃｽﾄ", 9],
+    ["русский текст", 7],
+    ["Καλημέρα", 4],
+    ["café résumé naïve", 6],
+    ["🙂", 1],
+    ["🙂🙂🙂🙂🙂", 5],
+    ["a🙂b", 2],
+    ["abc\ud800def", 2],
+    ["漢字\udfff", 3],
+    ["\ud800".repeat(5), 2],
+    ["\udfff".repeat(5), 2],
+  ])("matches Hermes' rough token budget for %j", (text, expected) => {
+    expect(count(text)).toBe(expected)
   })
 
-  test("prose — short English text", () => {
-    const n = count("The quick brown fox jumps over the lazy dog")
-    // o200k_base ~9-10 tokens for this sentence.
-    expect(n).toBeGreaterThan(5)
-    expect(n).toBeLessThan(15)
+  test.each([
+    [0x10ff, 3], [0x1100, 4], [0x11ff, 4], [0x1200, 3],
+    [0x2e7f, 3], [0x2e80, 4], [0x9fff, 4], [0xa000, 3],
+    [0xa95f, 3], [0xa960, 4], [0xa97f, 4], [0xa980, 3],
+    [0xabff, 3], [0xac00, 4], [0xd7af, 4], [0xd7b0, 3],
+    [0xf8ff, 3], [0xf900, 4], [0xfaff, 4], [0xfb00, 3],
+    [0xfeff, 3], [0xff00, 4], [0xffef, 4], [0xfff0, 3],
+  ])("preserves Hermes' dense-range boundary at U+%i", (code, expected) => {
+    expect(count(String.fromCodePoint(code).repeat(4))).toBe(expected)
   })
-
-  test("returns a number for JSON / schema-like content", () => {
-    // Real tool schemas trend LOWER than chars/4 because JSON keys and
-    // structural tokens (\"type\", \"properties\", etc.) are single-token
-    // even at 8-12 chars. The point is accuracy, not a fixed direction.
-    const json = JSON.stringify({
-      name: "file_write",
-      description: "Write content to a file.",
-      input_schema: {
-        type: "object",
-        properties: { path: { type: "string" }, content: { type: "string" } },
-      },
-    })
-    const n = count(json)
-    const rough = Math.ceil(json.length / 4)
-    // Must be different from the rough heuristic (that\'s the whole point)
-    expect(n).not.toBe(rough)
-    expect(n).toBeGreaterThan(0)
-  })
-
-  test("CJK — tokenizer counts more accurately than chars/4", () => {
-    // CJK chars are 1-3 tokens each; chars/4 massively undercounts.
-    const text = "你好世界你好世界你好世界你好世界你好世界"
-    const tokens = count(text)
-    const roughFour = Math.ceil(text.length / 4)
-    expect(tokens).toBeGreaterThan(roughFour)
-  })
-
 })
 
 describe("tokens.formatTokens", () => {

@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeAll } from "bun:test"
 import { mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
-import { count as tokenCount } from "../src/utils/tokens"
 import { readCronOutput } from "../src/service/hermes-home"
 
 const HH = process.env.HERMES_HOME!
@@ -36,7 +35,7 @@ describe("hermes-home readers", () => {
     expect(s).not.toBeNull()
     expect(s!.content).toContain("You are a test agent")
     expect(s!.charCount).toBe(s!.content.length)
-    expect(s!.tokenEstimate).toBe(tokenCount(s!.content))
+    expect(s!.tokenEstimate).toBe(9)
   })
 
   test("memoryProviders slice redacts secrets", async () => {
