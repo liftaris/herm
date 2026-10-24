@@ -243,9 +243,9 @@ async function clarifyPrompt(ctx: CaptureContext): Promise<Harness> {
   const t = await ctx.mount({ gw, width: 120, height: 30 })
   await ctx.until(t, () => t.frame().includes("Ready"))
   ctx.act(() => gw.push({ type: "message.start" }))
-  ctx.act(() => gw.push({
-    type: "clarify.request",
-    payload: { request_id: "c1", question: "Which option should I use?", choices: ["blue", "green"] },
+  ctx.act(() => gw.ask({
+    id: "srq-c1", method: "clarify",
+    params: { session_id: "test-sid", questions: [{ qid: "c1", question: "Which option should I use?", choices: ["blue", "green"], multi_select: false }] },
   }))
   await ctx.until(t, () => t.frame().includes("Which option"))
   return t
@@ -256,9 +256,9 @@ async function approvalPrompt(ctx: CaptureContext): Promise<Harness> {
   const t = await ctx.mount({ gw, width: 120, height: 30 })
   await ctx.until(t, () => t.frame().includes("Ready"))
   ctx.act(() => gw.push({ type: "message.start" }))
-  ctx.act(() => gw.push({
-    type: "approval.request",
-    payload: { command: "rm -rf /tmp/demo", description: "delete temp demo files" },
+  ctx.act(() => gw.ask({
+    id: "srq-a1", method: "approval",
+    params: { session_id: "test-sid", request_id: "a1", command: "rm -rf /tmp/demo", description: "delete temp demo files" },
   }))
   await ctx.until(t, () => t.frame().includes("Permission required") && t.frame().includes("rm -rf /tmp/demo"))
   return t

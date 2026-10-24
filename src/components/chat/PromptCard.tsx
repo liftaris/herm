@@ -13,7 +13,7 @@
 // Esc is the only cancel path.
 
 import {
-  memo, useRef, useState, forwardRef, useImperativeHandle,
+  memo, useRef, useState, useEffect, forwardRef, useImperativeHandle,
 } from "react"
 import { LEFT_BAR } from "../../ui/borders"
 import type { ParsedKey } from "@opentui/core"
@@ -96,13 +96,20 @@ const Approval = forwardRef<PromptCardHandle, {
   const [note, setNote] = useState("")
   const done = useRef(false)
 
+  useEffect(() => {
+    void gw.request("approval.received", { request_id: p.req.request_id, session_id: p.req.session_id })
+      .catch((e: Error) => setNote(e.message))
+  }, [gw, p.req.request_id, p.req.session_id])
+
   const prompt = mkApproval(p.req)
+  const choices = CHOICES.filter(c => (!p.req.choices?.length || p.req.choices.includes(RESPOND[c]))
+    && (c !== "never" || p.req.allow_permanent !== false) && (c !== "session" || p.req.allow_session !== false))
 
   const send = (c: Choice) => {
     if (done.current) return
     done.current = true
     setNote("")
-    void gw.request("approval.respond", { choice: RESPOND[c] })
+    void gw.answer(p.req.id, { choice: RESPOND[c] })
       .then(() => {
         if (c === "never") remember(prompt)
         p.onAnswer(LABELS[c], c !== "deny")
@@ -118,10 +125,8 @@ const Approval = forwardRef<PromptCardHandle, {
     if (!body) { setSteering(false); return }
     setCustom("")
     setSteering(false)
-    setNote("steer sent — approval still pending")
-    void gw.request("session.steer", { text: body }).catch(() =>
-      setNote("steer failed — approval still pending"),
-    )
+    setNote("steer sent, approval still pending")
+    void gw.request("session.steer", { text: body }).catch((e: Error) => setNote(e.message))
   }
 
   useImperativeHandle(ref, () => ({
@@ -133,15 +138,15 @@ const Approval = forwardRef<PromptCardHandle, {
       }
       if (key.name === "s") { setSteering(true); setNote(""); return true }
       if (key.name === "left" || key.name === "h") {
-        setSel(s => (s + CHOICES.length - 1) % CHOICES.length); return true
+        setSel(s => (s + choices.length - 1) % choices.length); return true
       }
       if (key.name === "right" || key.name === "l") {
-        setSel(s => (s + 1) % CHOICES.length); return true
+        setSel(s => (s + 1) % choices.length); return true
       }
-      if (key.name === "return") { send(CHOICES[sel]); return true }
+      if (key.name === "return") { send(choices[sel]); return true }
       if (key.name === "escape") { send("deny"); return true }
       const n = digit(key.name)
-      if (n !== null && n >= 1 && n <= CHOICES.length) { send(CHOICES[n - 1]); return true }
+      if (n !== null && n >= 1 && n <= choices.length) { send(choices[n - 1]); return true }
       return false
     },
   }), [sel, steering])
@@ -186,9 +191,9 @@ const Approval = forwardRef<PromptCardHandle, {
           <text fg={theme.textMuted}>Enter steer · Esc back to approval</text>
         </box>
       ) : (
-        <box flexDirection="row" gap={2} flexShrink={0}
+        <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}
              paddingX={2} paddingY={1} backgroundColor={theme.backgroundElement}>
-          {CHOICES.map((c, i) => (
+          {choices.map((c, i) => (
             <Pill key={c} on={sel === i} hot={String(i + 1)} label={LABELS[c]}
                   onPick={() => send(c)} />
           ))}
@@ -217,96 +222,104 @@ const Clarify = forwardRef<PromptCardHandle, {
 }>((p, ref) => {
   const theme = useTheme().theme
   const gw = useGateway()
-  const choices = p.req.choices ?? []
+  const [answers, setAnswers] = useState<Record<string, string | null>>(p.req.answers ?? {})
+  const remaining = p.req.questions.filter(q => !(q.qid in answers))
+  const q = remaining[0] ?? p.req.questions[p.req.questions.length - 1]
+  const choices = q.choices ?? []
   const [sel, setSel] = useState(0)
   const [typing, setTyping] = useState(choices.length === 0)
   const [custom, setCustom] = useState("")
+  const [selected, setSelected] = useState<string[]>([])
   const [err, setErr] = useState("")
   const done = useRef(false)
 
-  const send = (answer: string) => {
+  const finish = (next: Record<string, string | null>, outcome: "submitted" | "cancelled") => {
     if (done.current) return
     done.current = true
     setErr("")
-    void gw.request("clarify.respond", {
-      request_id: p.req.request_id, answer,
-    }).then(() => p.onAnswer(answer || "(cancelled)", answer !== ""))
-      .catch((e: Error) => {
-        done.current = false
-        setErr(e.message)
+    void gw.answer(p.req.id, { answers: next, outcome })
+      .then(() => p.onAnswer(Object.values(next).map(v => v ?? "(skipped)").join("; "), Object.values(next).some(v => v !== null)))
+      .catch((e: Error) => { done.current = false; setErr(e.message) })
+  }
+
+  const send = (answer: string | null) => {
+    if (done.current) return
+    const next = { ...answers, [q.qid]: answer?.trim() ? answer : null }
+    const following = p.req.questions.find(q => !(q.qid in next))
+    if (!following) { finish(next, "submitted"); return }
+    done.current = true
+    setErr("")
+    void gw.request<{ status: string }>("clarify.lock", { request_id: p.req.id, question_id: q.qid, answer: next[q.qid] })
+      .then(r => {
+        if (r.status === "expired") throw new Error(`request no longer open: ${p.req.id}`)
+        setAnswers(next)
+        setSel(0)
+        setSelected([])
+        setCustom("")
+        setTyping(!following.choices?.length)
       })
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => { done.current = false })
+  }
+
+  const cancel = () => finish(Object.fromEntries(p.req.questions.map(q => [q.qid, answers[q.qid] ?? null])), "cancelled")
+
+  const pick = (i: number) => {
+    if (i === choices.length + 1) { send(null); return }
+    if (i === choices.length) { setTyping(true); return }
+    if (!q.multi_select) { send(choices[i]); return }
+    setSelected(values => values.includes(choices[i]) ? values.filter(v => v !== choices[i]) : [...values, choices[i]])
   }
 
   useImperativeHandle(ref, () => ({
-    // Freeform mode owns a focused <input>; list mode doesn't.
     masked: typing,
-    feed: (key) => {
-      if (typing) {
-        // <input> handles text; we only intercept cancel-back.
-        if (key.name === "escape") {
-          if (choices.length) { setTyping(false); return true }
-          send(""); return true
-        }
-        return false
+    feed: key => {
+      if (key.name === "escape") {
+        if (typing && choices.length) { setTyping(false); return true }
+        cancel(); return true
       }
-      if (key.name === "escape") { send(""); return true }
-      if (key.name === "up")   { setSel(s => Math.max(0, s - 1)); return true }
-      if (key.name === "down") { setSel(s => Math.min(choices.length, s + 1)); return true }
+      if (typing) return false
+      if (key.name === "up") { setSel(s => Math.max(0, s - 1)); return true }
+      if (key.name === "down") { setSel(s => Math.min(choices.length + 1, s + 1)); return true }
       if (key.name === "return") {
-        if (sel === choices.length) { setTyping(true); return true }
-        const c = choices[sel]
-        if (c) send(c)
+        if (sel >= choices.length) pick(sel)
+        else if (q.multi_select && selected.length) send(selected.join(", "))
+        else pick(sel)
         return true
       }
+      if (key.name === "space" && q.multi_select) { pick(sel); return true }
       const n = digit(key.name)
-      if (n !== null && n >= 1 && n <= choices.length) { send(choices[n - 1]); return true }
+      if (n !== null && n >= 1 && n <= choices.length) { pick(n - 1); return true }
       return false
     },
-  }), [typing, sel, choices])
-
-  const head = (
-    <box minHeight={1}>
-      <text wrapMode="word">
-        <span fg={theme.accent}><strong>ask </strong></span>
-        <span fg={theme.text}><strong>{p.req.question}</strong></span>
-      </text>
-    </box>
-  )
+  }))
 
   return (
     <Frame tint={theme.accent}>
       <box flexDirection="column" paddingLeft={1} paddingRight={2} paddingY={1}>
-        {head}
-        <box height={1} />
+        <text fg={theme.accent} wrapMode="word"><strong>{q.question}</strong></text>
+        <text fg={theme.textMuted}>{p.req.questions.length - remaining.length + 1}/{p.req.questions.length}</text>
         {typing ? (
-          <>
-            <box flexDirection="row" height={1}>
-              <text fg={theme.textMuted}>{"> "}</text>
-              <input
-                value={custom} onInput={setCustom}
-                onSubmit={() => send(custom)}
-                focused flexGrow={1}
-                textColor={theme.text}
-                backgroundColor={theme.backgroundElement}
-                focusedBackgroundColor={theme.backgroundElement}
-              />
-            </box>
-            <text fg={theme.textMuted}>Enter send · Esc {choices.length ? "back" : "cancel"}</text>
-          </>
+          <input value={custom} onInput={setCustom} onSubmit={() => send(custom)} focused
+            textColor={theme.text} backgroundColor={theme.backgroundElement} focusedBackgroundColor={theme.backgroundElement} />
         ) : (
-          <>
-            {[...choices, "Other (type your answer)"].map((c, i) => (
-              <box key={i} height={1} onMouseDown={() =>
-                    i === choices.length ? setTyping(true) : send(choices[i])}>
-                <text fg={sel === i ? theme.text : theme.textMuted}>
-                  {sel === i ? "▸ " : "  "}{i + 1}. {c}
+          <box flexDirection="column">
+            {[...choices, "Other (type your answer)", "Skip question"].map((c, i) => (
+              <box key={c} minHeight={1} onMouseDown={() => pick(i)}>
+                <text fg={sel === i ? theme.text : theme.textMuted} wrapMode="word">
+                  {sel === i ? "▸ " : "  "}{i + 1}. {selected.includes(c) ? "[x] " : ""}{c}
                 </text>
               </box>
             ))}
-            <box height={1} />
-            <text fg={theme.textMuted}>↑/↓ · Enter · 1-{choices.length} · Esc cancel</text>
-          </>
+            {q.multi_select ? <box minHeight={1} onMouseDown={() => send(selected.join(", "))}><text fg={theme.accent}>Submit selections</text></box> : null}
+          </box>
         )}
+        <box flexDirection="row" flexWrap="wrap" gap={1}>
+          {typing ? <Pill on={false} hot="Enter" label="Submit" onPick={() => send(custom)} /> : null}
+          <Pill on={false} hot="" label="Skip question" onPick={() => send(null)} />
+          <Pill on={false} hot="Esc" label="Cancel" onPick={cancel} />
+        </box>
+        {q.multi_select ? <text fg={theme.textMuted}>Space/number toggle · Enter submit selections</text> : null}
         {err ? <text fg={theme.error}>{err}</text> : null}
       </box>
     </Frame>
@@ -352,7 +365,10 @@ const Masked = forwardRef<PromptCardHandle, {
         <box height={1} />
         <MaskInput value={value} input={setValue} submit={() => go(value)} />
         {err ? <text fg={theme.error}>{err}</text> : null}
-        <text fg={theme.textMuted}>Enter submit · Esc cancel</text>
+        <box flexDirection="row" gap={1}>
+          <Pill on={false} hot="Enter" label="Submit" onPick={() => go(value)} />
+          <Pill on={false} hot="Esc" label="Cancel" onPick={() => go("")} />
+        </box>
       </box>
     </Frame>
   )
@@ -369,11 +385,10 @@ function cap(s: string, n = 160): string {
 function question(part: PromptPart): string {
   const a = part.answered?.question
   if (a) return a
-  if (part.req.variant === "clarify") return part.req.question
+  if (part.req.variant === "clarify") return part.req.questions.map(q => q.question).join("; ")
   if (part.req.variant === "approval") return mkApproval(part.req).question
   if (part.req.variant === "sudo") return "Sudo required"
-  if (part.req.variant === "secret") return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
-  return "Terminal read required"
+  return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
 }
 
 function outcome(part: PromptPart): { head: string; body?: string } {
@@ -388,55 +403,9 @@ function outcome(part: PromptPart): { head: string; body?: string } {
     return { head: a.label, body: q }
   }
   if (part.variant === "sudo") return { head: `sudo ${a.label}` }
-  if (part.variant === "terminal-read") return { head: `terminal read ${a.label}` }
   const req = part.req as Extract<PromptReq, { variant: "secret" }>
   return { head: `${req.env_var ?? "secret"} ${a.label}` }
 }
-
-const TerminalRead = forwardRef<PromptCardHandle, {
-  req: Extract<PromptReq, { variant: "terminal-read" }>
-  onAnswer: Answer
-}>((p, ref) => {
-  const theme = useTheme().theme
-  const gw = useGateway()
-  const [err, setErr] = useState("")
-  const done = useRef(false)
-  const range = typeof p.req.start === "number" || typeof p.req.count === "number"
-    ? `requested range: ${p.req.start ?? "current"}:${p.req.count ?? "all"}`
-    : "requested current terminal output"
-
-  const send = () => {
-    if (done.current) return
-    done.current = true
-    setErr("")
-    void gw.request("terminal.read.respond", { request_id: p.req.request_id, text: "" })
-      .then(() => p.onAnswer("(unavailable)", false))
-      .catch((e: Error) => {
-        done.current = false
-        setErr(e.message)
-      })
-  }
-
-  useImperativeHandle(ref, () => ({
-    masked: false,
-    feed: (key) => {
-      if (key.name === "return" || key.name === "escape") { send(); return true }
-      return false
-    },
-  }), [])
-
-  return (
-    <Frame tint={theme.warning}>
-      <box flexDirection="column" paddingLeft={1} paddingRight={2} paddingY={1}>
-        <text fg={theme.warning}><strong>Terminal read required</strong></text>
-        <text fg={theme.textMuted}>{range}</text>
-        <text fg={theme.text} wrapMode="word">No embedded terminal buffer is available in Herm.</text>
-        {err ? <text fg={theme.error}>{err}</text> : null}
-        <text fg={theme.textMuted}>Enter/Esc returns empty</text>
-      </box>
-    </Frame>
-  )
-})
 
 const Outcome = memo(({ part }: { part: PromptPart }) => {
   const theme = useTheme().theme
@@ -472,15 +441,11 @@ export const PromptCard = memo(forwardRef<PromptCardHandle, {
   if (req.variant === "sudo")
     return <Masked ref={ref} title="🔒 Sudo required"
                    note="Enter your password to elevate privileges."
-                   onSubmit={v => gw.request("sudo.respond",
-                     { request_id: req.request_id, password: v })}
+                   onSubmit={v => gw.answer(req.id, { value: v })}
                    onAnswer={answer} />
-  if (req.variant === "terminal-read")
-    return <TerminalRead ref={ref} req={req} onAnswer={answer} />
   return <Masked ref={ref} title={`🔑 Secret: ${req.env_var}`}
                  note={req.prompt}
-                 onSubmit={v => gw.request("secret.respond",
-                   { request_id: req.request_id, value: v })}
+                 onSubmit={v => gw.answer(req.id, { value: v })}
                  onAnswer={answer} />
 }))
 

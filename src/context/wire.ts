@@ -1,6 +1,7 @@
 // Typed events and RPC responses for the tui_gateway JSON-RPC protocol.
 
 import type { Usage } from "../types/message"
+import type { ServerRequest } from "./server-requests"
 
 export type NotificationShowPayload = {
   text: string
@@ -52,11 +53,7 @@ export type GatewayEvent = ({
   | { type: "tool.progress"; payload: { name?: string; preview?: string } }
   | { type: "tool.generating"; payload: { name?: string } }
   | { type: "tool.complete"; payload: { tool_id: string; name?: string; summary?: string; error?: string; inline_diff?: string; duration_s?: number; result_text?: string; todos?: unknown[] } }
-  | { type: "clarify.request"; payload: { request_id: string; question: string; choices: string[] | null } }
-  | { type: "approval.request"; payload: { command: string; description: string; pattern_keys?: string[] } }
-  | { type: "sudo.request"; payload: { request_id: string } }
-  | { type: "secret.request"; payload: { request_id: string; prompt: string; env_var: string; metadata?: unknown } }
-  | { type: "terminal.read.request"; payload: { request_id: string; start?: number; count?: number } }
+  | { type: "request.cancel"; payload: { id: string; method: string; reason: string } }
   | { type: "background.complete"; payload: { task_id: string; text: string } }
   | { type: "review.summary"; payload?: { text?: string } }
   | { type: "btw.complete"; payload: { text: string } }
@@ -107,11 +104,7 @@ export const GATEWAY_EVENT_TYPES = [
   "tool.progress",
   "tool.generating",
   "tool.complete",
-  "clarify.request",
-  "approval.request",
-  "sudo.request",
-  "secret.request",
-  "terminal.read.request",
+  "request.cancel",
   "background.complete",
   "review.summary",
   "btw.complete",
@@ -301,6 +294,7 @@ export type SessionCreateResponse = {
 }
 
 export type SessionResumeResponse = {
+  open_requests?: ServerRequest[]
   session_id: string
   resumed?: string
   session_key?: string
@@ -335,6 +329,7 @@ export type SessionInflightTurn = {
 }
 
 export type SessionActivateResponse = {
+  open_requests?: ServerRequest[]
   session_id: string
   session_key?: string
   messages: TranscriptMessage[]

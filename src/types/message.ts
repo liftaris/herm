@@ -43,17 +43,19 @@ export type ThinkingPart = {
 export type PromptPart = {
   type: "prompt"
   id: string
-  variant: "approval" | "clarify" | "sudo" | "secret" | "terminal-read"
+  variant: PromptReq["variant"]
   req: PromptReq
   answered?: { label: string; ok: boolean; at: number; question?: string }
 }
 
-export type PromptReq =
-  | { variant: "approval"; command: string; description: string; pattern_keys?: string[] }
-  | { variant: "clarify"; request_id: string; question: string; choices: string[] | null }
-  | { variant: "sudo"; request_id: string }
-  | { variant: "secret"; request_id: string; prompt: string; env_var: string }
-  | { variant: "terminal-read"; request_id: string; start?: number; count?: number }
+export type ClarifyQuestion = { qid: string; question: string; choices: string[] | null; multi_select: boolean }
+
+export type PromptReq = { id: string; session_id: string } & (
+  | { variant: "approval"; request_id: string; command: string; description: string; pattern_keys?: string[]; choices?: string[]; allow_permanent?: boolean; allow_session?: boolean }
+  | { variant: "clarify"; questions: ClarifyQuestion[]; answers?: Record<string, string | null> }
+  | { variant: "sudo"; command: string }
+  | { variant: "secret"; prompt: string; env_var: string }
+)
 
 export type Part = TextPart | ToolPart | ThinkingPart | PromptPart
 
