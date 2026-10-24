@@ -1320,7 +1320,7 @@ export const HERMES_MANIFEST = {
       "diff": {
         "additions": [
           "approval.pending",
-          "approval.received",
+          "approval.respond",
           "billing.auto_reload",
           "billing.charge",
           "billing.charge_status",
@@ -1331,8 +1331,6 @@ export const HERMES_MANIFEST = {
           "bot_relay.outbox.drain",
           "bot_relay.reply",
           "bot_relay.roster.sync",
-          "clarify.lock",
-          "client.capabilities",
           "command.resolve",
           "config.show",
           "connection.respond",
@@ -1456,7 +1454,6 @@ export const HERMES_MANIFEST = {
           "projects.tree",
           "projects.update",
           "prompt.btw",
-          "request.answer",
           "session.archive",
           "session.branch_stored",
           "session.branch_whole",
@@ -1516,34 +1513,8 @@ export const HERMES_MANIFEST = {
           "wake.status",
           "wake.stop"
         ],
-        "removals": [
-          "clarify.respond",
-          "secret.respond",
-          "sudo.respond",
-          "terminal.read.respond"
-        ],
-        "likelyRenames": [
-          {
-            "from": "clarify.respond",
-            "to": "clarify.lock",
-            "score": 0.5
-          },
-          {
-            "from": "clarify.respond",
-            "to": "connection.respond",
-            "score": 0.5
-          },
-          {
-            "from": "secret.respond",
-            "to": "connection.respond",
-            "score": 0.5
-          },
-          {
-            "from": "sudo.respond",
-            "to": "connection.respond",
-            "score": 0.5
-          }
-        ]
+        "removals": [],
+        "likelyRenames": []
       }
     },
     "events": {
@@ -1964,7 +1935,6 @@ export const HERMES_MANIFEST = {
           "preview.close",
           "preview.open",
           "projects.changed",
-          "request.cancel",
           "session.control.update",
           "session.reclaimed",
           "session.resume_progress",
@@ -1979,52 +1949,11 @@ export const HERMES_MANIFEST = {
           "wake.detected"
         ],
         "removals": [
-          "approval.request",
-          "clarify.request",
           "gateway.protocol_error",
           "gateway.start_timeout",
-          "gateway.stderr",
-          "secret.request",
-          "sudo.request",
-          "terminal.read.request"
+          "gateway.stderr"
         ],
-        "likelyRenames": [
-          {
-            "from": "approval.request",
-            "to": "approval.cancelled",
-            "score": 0.5
-          },
-          {
-            "from": "approval.request",
-            "to": "connection.request",
-            "score": 0.5
-          },
-          {
-            "from": "clarify.request",
-            "to": "connection.request",
-            "score": 0.5
-          },
-          {
-            "from": "secret.request",
-            "to": "connection.request",
-            "score": 0.5
-          },
-          {
-            "from": "approval.request",
-            "to": "request.cancel",
-            "score": 0.5
-          },
-          {
-            "from": "clarify.request",
-            "to": "request.cancel",
-            "score": 0.5
-          },
-          {
-            "from": "secret.request",
-            "to": "request.cancel",
-            "score": 0.5
-          }
-        ]
+        "likelyRenames": []
       }
     }
   },
