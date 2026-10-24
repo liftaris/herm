@@ -6,7 +6,7 @@ import { homedir } from "os"
 import { resolve, delimiter } from "path"
 import { existsSync } from "fs"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
-import { backend } from "./backend-contract"
+import { prompt, type ServerRequest } from "./server-requests"
 import { encode } from "../utils/unicode"
 
 const LOG_MAX = 200
@@ -193,7 +193,7 @@ export class GatewayClient extends EventEmitter {
   private unknown = new Map<string, Diag>()
   private pending = new Map<string, Pending>()
   private buf: GatewayEvent[] = []
-  private contract = backend.backendContract(null)
+  private requests = new Map<string, { frame: ServerRequest; replayed: boolean }>()
   private exit: number | null | undefined
   private ok = false
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -240,22 +240,19 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
-  private observe(raw: unknown) {
-    const next = backend.backendContract(raw)
-    this.contract = next.reason === "missing" && this.contract.supported ? this.contract : next
-  }
-
   private dispatch(msg: Record<string, unknown>, source: GatewayEventSource = "stdio") {
+    if (typeof msg.method === "string" && msg.id !== undefined) {
+      this.receive(msg)
+      return
+    }
     const id = msg.id as string | undefined
     const p = id ? this.pending.get(id) : undefined
 
     if (p) {
       this.pending.delete(id!)
       const res = msg.result
-      const info = res && typeof res === "object" && !Array.isArray(res)
-        ? (res as { info?: unknown }).info
-        : undefined
-      if (info) this.observe(info)
+      const open = rec(res)?.open_requests
+      if (Array.isArray(open)) open.forEach(frame => { if (rec(frame)) this.receive(frame, true) })
       if (msg.error) {
         const err = msg.error as { message?: unknown }
         p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
@@ -268,10 +265,38 @@ export class GatewayClient extends EventEmitter {
     if (msg.method === "event") {
       const ev = asEvent(msg.params)
       if (ev) {
-        if (ev.type === "session.info") this.observe(ev.payload)
+        if (ev.type === "request.cancel") this.requests.delete(ev.payload.id)
         this.push(ev, source)
       }
     }
+  }
+
+  private write(frame: Record<string, unknown>) {
+    const data = encode(frame).text
+    if (this.ws?.readyState === WS_OPEN) { this.ws.send(data); return }
+    const stdin = this.proc?.stdin
+    if (!stdin || typeof stdin === "number" || this.proc?.exitCode !== null) throw new Error("gateway not connected")
+    stdin.write(data + "\n")
+  }
+
+  private receive(raw: Record<string, unknown>, replayed = false) {
+    if (typeof raw.id !== "string" || typeof raw.method !== "string") return
+    const frame = { id: raw.id, method: raw.method, params: rec(raw.params) ?? {} }
+    if (!prompt(frame)) {
+      this.write({ jsonrpc: "2.0", id: frame.id, error: { code: 4404, message: `Herm cannot show ${frame.method}` } })
+      return
+    }
+    const old = this.requests.get(frame.id)
+    this.requests.set(frame.id, { frame, replayed: old?.replayed === false ? false : replayed })
+    if (!replayed && this.sub) this.emit("request", frame)
+  }
+
+  async answer(id: string, result: Record<string, unknown>): Promise<void> {
+    const req = this.requests.get(id)
+    if (!req) throw new Error(`request no longer open: ${id}`)
+    if (req.replayed) await this.request("request.answer", { id, result })
+    else this.write({ jsonrpc: "2.0", id, result })
+    this.requests.delete(id)
   }
 
   private fail(err: Error) {
@@ -311,6 +336,9 @@ export class GatewayClient extends EventEmitter {
       ws.addEventListener("open", () => {
         if (settled) return
         settled = true
+        void this.request("client.capabilities", { server_requests: true }).catch(err => {
+          this.push({ type: "error", payload: { message: String(err) } })
+        })
         resolve()
       }, { once: true })
       ws.addEventListener("error", () => {
@@ -383,7 +411,7 @@ export class GatewayClient extends EventEmitter {
     // Reset state
     this.ok = false
     this.buf = []
-    this.contract = backend.backendContract(null)
+    this.requests.clear()
     this.exit = undefined
 
     let restarted = false
@@ -485,6 +513,7 @@ export class GatewayClient extends EventEmitter {
     if (this.sub) return
     this.sub = true
     for (const ev of this.buf.splice(0)) this.emit("event", ev)
+    for (const req of this.requests.values()) if (!req.replayed) this.emit("request", req.frame)
     if (this.exit !== undefined) {
       const code = this.exit
       this.exit = undefined
@@ -504,8 +533,6 @@ export class GatewayClient extends EventEmitter {
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    const blocked = backend.contractError(method, this.contract, params)
-    if (blocked) return Promise.reject(blocked)
     const raw = gatewayUrl()
     if (raw) return this.remote<T>(raw, method, params)
     if (!this.proc || this.proc.exitCode !== null) this.start()
@@ -545,8 +572,6 @@ export class GatewayClient extends EventEmitter {
   }
 
   private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
-    const blocked = backend.contractError(method, this.contract, params)
-    if (blocked) return Promise.reject(blocked)
     try { websocketUrl(raw) }
     catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
     if (this.target !== raw || !this.ws || this.ws.readyState === WS_CLOSING || this.ws.readyState === WS_CLOSED)

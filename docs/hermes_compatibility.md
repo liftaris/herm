@@ -47,7 +47,7 @@ where no generator covers the surface yet.
   `HERMES_AGENT_ROOT=/path/to/hermes-agent bun run gen-fixtures:check`,
   `scripts/gen-hermes-fixtures.ts`, and
   `test/fixtures/hermes/README.md`.
-- Runtime backend contract: `src/context/backend-contract.ts`,
+- Runtime request protocol: `src/context/server-requests.ts` and `src/context/gateway-client.ts`,
   `src/app/sessionCapabilities.ts`, and their gateway/app tests.
 - Latest-Hermes canary: `bun run current-hermes-canary`,
   `scripts/current-hermes-canary.ts`, and
