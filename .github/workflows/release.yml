@@ -28,7 +28,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.4
 
       # semantic-release itself and @semantic-release/npm run `npm`, not
       # bun, so a node toolchain still has to be present. setup-bun ships
