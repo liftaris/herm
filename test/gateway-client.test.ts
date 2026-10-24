@@ -168,6 +168,39 @@ describe("GatewayClient", () => {
     }
   })
 
+  test("keeps local gateway startup longer than websocket startup", () => {
+    const spawn = Bun.spawn
+    const clock = globalThis.setTimeout
+    const seen: number[] = []
+    const proc = {
+      stdin: { write() { return 0 } },
+      stdout: null,
+      stderr: null,
+      exited: new Promise<number>(() => {}),
+      exitCode: null as number | null,
+      kill() {},
+    }
+    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => proc as never) as typeof Bun.spawn
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+      seen.push(Number(args[1]))
+      return timer(() => {}, 0)
+    }) as typeof setTimeout
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const local = new GatewayClient()
+    const remote = new GatewayClient()
+    try {
+      local.start()
+      process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws"
+      remote.start()
+      expect(seen).toEqual([35_000, 15_000])
+    } finally {
+      local.kill()
+      remote.kill()
+      globalThis.setTimeout = clock
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = spawn
+    }
+  })
+
   test("startup timeout terminates the wedged gateway", async () => {
     const spawn = Bun.spawn
     const clock = globalThis.setTimeout
@@ -187,7 +220,7 @@ describe("GatewayClient", () => {
       },
     }
     ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => proc as never) as typeof Bun.spawn
-    const fast = (handler: () => void, ms?: number) => clock(handler, ms === 15_000 ? 0 : ms)
+    const fast = (handler: () => void, ms?: number) => clock(handler, ms === 35_000 ? 0 : ms)
     globalThis.setTimeout = fast as unknown as typeof setTimeout
     const gw = new GatewayClient()
     let exits = 0

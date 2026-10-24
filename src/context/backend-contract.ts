@@ -1,5 +1,5 @@
 export const MIN_BACKEND_CONTRACT = 4
-export const MAX_BACKEND_CONTRACT = 5
+export const MAX_BACKEND_CONTRACT = 6
 
 export type BackendContractReason = "missing" | "malformed" | "older" | "supported" | "newer"
 
