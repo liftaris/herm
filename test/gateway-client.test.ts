@@ -136,6 +136,63 @@ describe("python", () => {
 })
 
 describe("GatewayClient", () => {
+  for (const transport of ["stdio", "websocket"]) {
+    test(`${transport} session listings omit implicit session_id without losing session routing`, async () => {
+      const enc = new TextEncoder()
+      let ctrl!: ReadableStreamDefaultController<Uint8Array>
+      const stdout = new ReadableStream<Uint8Array>({ start: c => { ctrl = c } })
+      const frames: Array<{ id: string; method: string; params: Record<string, unknown> }> = []
+      const receive = (data: string) => {
+        const req = JSON.parse(data)
+        frames.push(req)
+        // Current Hermes rejects extra keys on these listing contracts.
+        const allowed = req.method === "session.list"
+          ? ["limit", "profile", "title", "include_hidden"]
+          : req.method === "session.active_list" ? ["current_session_id"] : null
+        const invalid = allowed && Object.keys(req.params).some(k => !allowed.includes(k))
+        return JSON.stringify({ jsonrpc: "2.0", id: req.id, ...(invalid
+          ? { error: { code: 4000, message: "unexpected listing parameter" } }
+          : { result: { sessions: [] } }) })
+      }
+      const spawn = spyOn(Bun, "spawn").mockImplementation((() => ({
+        stdin: { write(data: string) { ctrl.enqueue(enc.encode(receive(data) + "\n")); return data.length } },
+        stdout, stderr: null, exited: new Promise<null>(() => {}), exitCode: null, kill() {},
+      })) as unknown as typeof Bun.spawn)
+      const send = spyOn(FakeSocket.prototype, "send").mockImplementation(function (this: FakeSocket, data: string) {
+        this.message(receive(data))
+      })
+      const gw = new GatewayClient()
+      try {
+        if (transport === "websocket") {
+          process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws"
+          globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+        }
+        gw.start()
+        if (transport === "websocket") FakeSocket.list[0]!.open()
+        gw.setSession("active")
+        const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+          ["session.list", { limit: 2000, profile: "default" }, { limit: 2000, profile: "default" }],
+          ["session.active_list", { current_session_id: "active" }, { current_session_id: "active" }],
+          ["session.history", { limit: 10 }, { session_id: "active", limit: 10 }],
+          ["session.history", { session_id: "other" }, { session_id: "other" }],
+        ]
+        for (const [method, params, expected] of cases) {
+          await expect(gw.request(method, params)).resolves.toEqual({ sessions: [] })
+          expect(frames.at(-1)?.params).toEqual(expected)
+          expect(params).not.toHaveProperty("session_id", "active")
+        }
+        gw.setSession("")
+        await gw.request("session.history", { limit: 10 })
+        expect(frames.at(-1)?.params).toEqual({ limit: 10 })
+      } finally {
+        gw.kill()
+        ctrl.close()
+        spawn.mockRestore()
+        send.mockRestore()
+      }
+    })
+  }
+
   test("unsupported backend contract blocks mutations before transport writes", async () => {
     const prev = Bun.spawn
     let spawns = 0

@@ -498,9 +498,18 @@ export class GatewayClient extends EventEmitter {
 
   private sid = ""
 
-  /** Set the active session id; auto-injected into subsequent requests. */
+  /** Set the active session id; auto-injected except for session listings. */
   setSession(sid: string) {
     this.sid = sid
+  }
+
+  private params(method: string, params: Record<string, unknown>): Record<string, unknown> {
+    // Listings are not scoped to a session; strict Hermes contracts reject session_id.
+    // session.active_list uses the caller's current_session_id instead.
+    if (method === "session.list" || method === "session.active_list") return params
+    return this.sid && params.session_id === undefined
+      ? { session_id: this.sid, ...params }
+      : params
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -515,9 +524,7 @@ export class GatewayClient extends EventEmitter {
 
     const rid = `r${++this.id}`
     const writer = stdin as { write(data: string | Uint8Array): number }
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
+    const merged = this.params(method, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -553,9 +560,7 @@ export class GatewayClient extends EventEmitter {
       this.start()
 
     const rid = `r${++this.id}`
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
+    const merged = this.params(method, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
