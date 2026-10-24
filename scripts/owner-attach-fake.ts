@@ -6,7 +6,7 @@ const size = Number(process.env.FAKEGW_REPLY_SIZE ?? 730)
 const paragraph = "A bounded transcript keeps the current reply visible while older messages remain available on scroll. **Markdown** and `inline code` exercise the text renderer.\n\n"
 const reply = (n: number) => {
   const head = `## Reply ${n}\n\n`
-  const tail = `\n\n\`\`\`ts\nconst turn = ${n}\nconsole.log(turn)\n\`\`\`\n\nLOAD_DONE_${n}`
+  const tail = `\n\n\`\`\`ts\nconst turn = ${n}\nconsole.log(turn)\n\`\`\`\n\nLOAD_DONE_${String(n).padStart(6, "0")}_END`
   return head + paragraph.repeat(Math.ceil(size / paragraph.length)).slice(0, Math.max(0, size - head.length - tail.length)) + tail
 }
 let sent = 0

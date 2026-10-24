@@ -20,12 +20,14 @@ const start = performance.now()
 let paint: number | undefined
 let bytes = 0
 let output = ""
+const painted = new Set<number>()
 const terminal = new Bun.Terminal({
   cols: 200, rows: 50,
   data(term, data) {
     bytes += data.byteLength
     output = (output + new TextDecoder().decode(data)).slice(-100_000)
     if (paint === undefined && output.includes("Chat") && output.includes("Sessions")) paint = performance.now() - start
+    for (const match of output.matchAll(/LOAD_DONE_(\d+)_END/g)) painted.add(Number(match[1]))
     const text = new TextDecoder().decode(data)
     if (text.includes("\x1b[6n")) term.write("\x1b[1;1R")
     if (text.includes("\x1b[c") || text.includes("\x1b[0c")) term.write("\x1b[?1;2c")
@@ -47,14 +49,6 @@ const request = async (path: string, body?: object) => {
   const res = await fetch(control + path, { method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(500) })
   if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 400)}`)
   return res
-}
-let busy = 0
-const frame = async () => {
-  const res = await fetch(control + "/frame", { signal: AbortSignal.timeout(500) })
-  const text = await res.text()
-  if (res.status === 500 && text.includes("OutputBusy")) { busy++; return "" }
-  if (!res.ok) throw new Error(`/frame: ${res.status} ${text.slice(0, 400)}`)
-  return text
 }
 const status = async () => await (await request("/status")).json() as { ready: boolean; streaming: boolean; messages: number; heap: number }
 const wait = async (fn: () => Promise<boolean>, timeout = 10_000) => {
@@ -92,7 +86,7 @@ try {
     await request("/send", { message: `load-user-${n}` })
     await wait(async () => {
       const s = await status()
-      return !s.streaming && s.messages === initial + n * 2 && (await frame()).includes(`LOAD_DONE_${n}`)
+      return !s.streaming && s.messages === initial + n * 2 && painted.has(n)
     })
     times.push(performance.now() - time)
   }
@@ -101,7 +95,7 @@ try {
   const nodes = await (await request("/focus")).json() as { counts: { total: number } }
   const after = await idle()
   const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
-  console.log(JSON.stringify({ first_paint_ms: paint, before, loaded_rss_mb: loaded.rss, heap_mb: state.heap, messages: state.messages, injected_messages: 200, mounted_nodes: nodes.counts.total, first_10_turn_ms: mean(times.slice(0, 10)), last_10_turn_ms: mean(times.slice(-10)), after, load_average: loadavg(), terminal_bytes: bytes, frame_busy_retries: busy, errors: 0 }))
+  console.log(JSON.stringify({ first_paint_ms: paint, before, loaded_rss_mb: loaded.rss, heap_mb: state.heap, messages: state.messages, injected_messages: 200, mounted_nodes: nodes.counts.total, first_10_turn_ms: mean(times.slice(0, 10)), last_10_turn_ms: mean(times.slice(-10)), after, load_average: loadavg(), terminal_bytes: bytes, painted_turns: painted.size, errors: 0 }))
 } finally {
   app.kill("SIGKILL")
   fake.kill("SIGKILL")
