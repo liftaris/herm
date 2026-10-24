@@ -171,8 +171,7 @@ internals or unexported source paths.
 - Press `Ctrl+K` for the command palette.
 - Type `/` for the slash popover.
 - Type `/theme` to browse built-in themes.
-- Type `/keys` to view and rebind keybindings, including OpenCode-compatible
-  bindings.
+- Type `/keys` to view and rebind keybindings.
 - Use `Tab` / `Shift+Tab` to move between top-level tabs. Arrow keys navigate
   within a tab.
 

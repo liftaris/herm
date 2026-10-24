@@ -16,10 +16,7 @@ import {
 } from "../keys"
 import { print as chordPrint } from "../keys/chord"
 import type { DialogContext } from "../ui/dialog"
-import { useToast } from "../ui/toast"
 import { openTextPrompt } from "./text-prompt"
-import { openConfirm } from "./confirm"
-import { loadOcKeybinds } from "../keys/oc-compat"
 
 type Group = { title: string; scope: Scope }
 
@@ -40,7 +37,6 @@ type Row =
 const KeysDialog = (props: { dialog: DialogContext }) => {
   const theme = useTheme().theme
   const keys = useKeys()
-  const toast = useToast()
   const overrides = prefs.get("keys") ?? {}
 
   const rows = useMemo<Row[]>(() => GROUPS.flatMap(g => {
@@ -84,30 +80,11 @@ const KeysDialog = (props: { dialog: DialogContext }) => {
     })
   }
 
-  const importOc = () => {
-    const r = loadOcKeybinds()
-    if (r.sources.length === 0)
-      return toast.show({ variant: "info", message: "No opencode tui.json found" })
-    const n = Object.keys(r.overrides).length
-    void openConfirm(props.dialog, {
-      title: `Import ${n} keybind${n === 1 ? "" : "s"} from opencode?`,
-      body: `${r.sources.map(s => `· ${s}`).join("\n")}\n\n${n} mapped · ${r.skipped.length} skipped (no herm equivalent)${r.skipped.length ? `:\n${r.skipped.slice(0, 8).join(", ")}${r.skipped.length > 8 ? ", …" : ""}` : ""}`,
-      yes: "import",
-    }).then(ok => {
-      openKeys(props.dialog)
-      if (!ok) return
-      prefs.set("keys", { ...(prefs.get("keys") ?? {}), ...r.overrides })
-      toast.show({ variant: "success",
-        message: `Imported ${n} · skipped ${r.skipped.length}` })
-    })
-  }
-
   useKeyboard((key) => {
     if (key.name === "up")   return setSel(s => Math.max(0, s - 1))
     if (key.name === "down") return setSel(s => Math.min(actionRows.length - 1, s + 1))
     if (key.name === "return" && cur) return rebind(cur.id)
     if (key.name === "r" && !key.ctrl && cur?.override) { write(cur.id, undefined); return }
-    if (key.name === "o" && !key.ctrl) return importOc()
   })
 
   return (
@@ -159,7 +136,7 @@ const KeysDialog = (props: { dialog: DialogContext }) => {
       <box height={1}>
         {curConflicts.length > 0
           ? <text fg={theme.warning}>{`⚠ shares ${keys.print(cur!.id)} with: ${curConflicts.join(", ")}`}</text>
-          : <text fg={theme.textMuted}>{`↑↓ select  Enter rebind${cur?.override ? "  ·  r reset" : ""}  ·  o import opencode  ·  esc close  ·  · = overridden`}</text>}
+          : <text fg={theme.textMuted}>{`↑↓ select  Enter rebind${cur?.override ? "  ·  r reset" : ""}  ·  esc close  ·  · = overridden`}</text>}
       </box>
     </box>
   )

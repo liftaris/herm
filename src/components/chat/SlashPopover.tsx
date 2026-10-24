@@ -1,13 +1,3 @@
-/**
- * Slash command popover — OpenCode-inspired visual style.
- *
- * Purely presentational. Keyboard navigation lives in the parent (app.tsx
- * useKeyboard) to avoid OpenTUI's global keyboard event conflicts.
- *
- * Uses a sliding window that follows the cursor rather than scrollbox
- * (scrollbox requires focus to scroll, which would conflict with the input).
- */
-
 import { useMemo, memo } from "react"
 import type { RGBA } from "@opentui/core"
 import { useTheme } from "../../theme"
