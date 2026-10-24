@@ -20,6 +20,8 @@ class FakeSocket extends EventTarget {
   send(data: string) {
     if (this.readyState !== 1) throw new Error("socket closed")
     this.sent.push(data)
+    const frame = JSON.parse(data)
+    if (frame.method === "client.capabilities") queueMicrotask(() => this.message(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: {} })))
   }
 
   close(code = 1000) {
@@ -136,20 +138,6 @@ describe("python", () => {
 })
 
 describe("GatewayClient", () => {
-  test("unsupported backend contract blocks mutations before transport writes", async () => {
-    const prev = Bun.spawn
-    let spawns = 0
-    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => { spawns++; throw new Error("should not spawn") }) as typeof Bun.spawn
-    const gw = new GatewayClient()
-
-    try {
-      await expect(gw.request("prompt.submit", { text: "hi" })).rejects.toThrow("Blocked prompt.submit")
-      expect(spawns).toBe(0)
-    } finally {
-      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = prev
-    }
-  })
-
   test("synchronous spawn failure reports exit without throwing", () => {
     const prev = Bun.spawn
     ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => {
@@ -429,7 +417,7 @@ describe("GatewayClient websocket attach mode", () => {
     const ws = FakeSocket.list[0]!
     ws.open()
     await Bun.sleep(0)
-    expect(ws.sent).toHaveLength(1)
+    expect(ws.sent).toHaveLength(2)
 
     gw.kill()
     await Bun.sleep(0)
@@ -449,7 +437,7 @@ describe("GatewayClient websocket attach mode", () => {
     const old = FakeSocket.list[0]!
     old.open()
     await Bun.sleep(0)
-    const a = JSON.parse(old.sent[0]!) as { id: string }
+    const a = JSON.parse(old.sent.find(data => JSON.parse(data).method === "session.create")!) as { id: string }
     old.message(JSON.stringify({ jsonrpc: "2.0", id: a.id, result: null }))
     await first
     gw.drain()
@@ -460,7 +448,7 @@ describe("GatewayClient websocket attach mode", () => {
     old.message(JSON.stringify({ jsonrpc: "2.0", method: "event", params: { type: "tool.start" } }))
     next.open()
     await Bun.sleep(0)
-    const b = JSON.parse(next.sent[0]!) as { id: string }
+    const b = JSON.parse(next.sent.find(data => JSON.parse(data).method === "session.create")!) as { id: string }
     next.message(JSON.stringify({ jsonrpc: "2.0", id: b.id, result: null }))
 
     expect(events).toEqual([])
@@ -482,9 +470,9 @@ describe("GatewayClient websocket attach mode", () => {
     expect(ws.sent).toHaveLength(0)
     ws.open()
     await Bun.sleep(0)
-    expect(ws.sent).toHaveLength(1)
+    expect(ws.sent).toHaveLength(2)
 
-    const frame = JSON.parse(ws.sent[0]!) as { id: string; method: string; params: { cols: number } }
+    const frame = JSON.parse(ws.sent.find(data => JSON.parse(data).method === "session.create")!) as { id: string; method: string; params: { cols: number } }
     expect(frame.method).toBe("session.create")
     expect(frame.params.cols).toBe(80)
 

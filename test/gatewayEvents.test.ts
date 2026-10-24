@@ -234,17 +234,9 @@ describe("mapEvent", () => {
     expect(String(r.calls.status?.[0])).toContain(aggregator)
   })
 
-  test("request events return prompt actions (no side callback)", () => {
-    expect(map({ type: "clarify.request", payload: { request_id: "x", question: "?", choices: null } }).action)
-      .toEqual({ kind: "prompt", id: "x", req: { variant: "clarify", request_id: "x", question: "?", choices: null } })
-    expect(map({ type: "approval.request", payload: { command: "rm", description: "d" } }).action)
-      .toMatchObject({ kind: "prompt", req: { variant: "approval", command: "rm", description: "d" } })
-    expect(map({ type: "sudo.request", payload: { request_id: "s" } }).action)
-      .toEqual({ kind: "prompt", id: "s", req: { variant: "sudo", request_id: "s" } })
-    expect(map({ type: "secret.request", payload: { request_id: "k", prompt: "p", env_var: "API_KEY" } }).action)
-      .toEqual({ kind: "prompt", id: "k", req: { variant: "secret", request_id: "k", prompt: "p", env_var: "API_KEY" } })
-    expect(map({ type: "terminal.read.request", payload: { request_id: "term", start: 4, count: 12 } }).action)
-      .toEqual({ kind: "prompt", id: "term", req: { variant: "terminal-read", request_id: "term", start: 4, count: 12 } })
+  test("request.cancel removes only its matching prompt", () => {
+    expect(map({ type: "request.cancel", payload: { id: "srq-cancel", method: "approval", reason: "timeout" } }).action)
+      .toEqual({ kind: "prompt.cancel", id: "srq-cancel" })
   })
 
   test("current gateway side-channel events are known no-ops", () => {

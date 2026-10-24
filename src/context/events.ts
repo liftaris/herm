@@ -2,11 +2,10 @@
 
 import * as perf from "../utils/perf"
 import * as spawnHistory from "../app/spawnHistory"
-import { shouldRemember } from "./approval-memory"
 import { showNotification, clearNotification } from "../app/notices"
 import type { GatewayEvent, GatewaySkin, SessionInfo } from "../context/wire"
 import type { Action } from "../app/turnReducer"
-import { pid, type PromptReq, type Usage } from "../types/message"
+import type { Usage } from "../types/message"
 import type { ToastContext } from "../ui/toast"
 
 export type Side = {
@@ -19,7 +18,6 @@ export type Side = {
   onStatus?: (text: string) => void
   onSessionTitle?: (sid?: string, title?: string) => void
   onSkin?: (skin: GatewaySkin | null | undefined) => void
-  onApprovalRemembered?: (fallback: Extract<Action, { kind: "prompt" }>) => void
   /** voice.status event — gateway VAD loop state change (listening/transcribing/idle). */
   onVoiceStatus?: (state: string) => void
   /** voice.transcript event — transcribed text from a completed voice capture. */
@@ -196,39 +194,8 @@ export function mapEvent(ev: GatewayEvent, side: Side): Action | null {
     case "error":
       return { kind: "error", text: ev.payload?.message ?? "Unknown error" }
 
-    case "clarify.request":
-      return { kind: "prompt", id: ev.payload.request_id,
-               req: { variant: "clarify", ...ev.payload } }
-
-    case "approval.request": {
-      const req: Extract<PromptReq, { variant: "approval" }> = { variant: "approval", ...ev.payload }
-      const fallback: Extract<Action, { kind: "prompt" }> = {
-        kind: "prompt",
-        id: `approval-${pid()}`,
-        req,
-      }
-      if (shouldRemember(req)) {
-        side.onApprovalRemembered?.(fallback)
-        return null
-      }
-      // Approval has no request_id upstream — the gateway's approval
-      // responder is a single pending slot. Mint a unique part id so
-      // multiple approvals in one turn don't alias each other when
-      // prompt.answered updates by id.
-      return fallback
-    }
-
-    case "sudo.request":
-      return { kind: "prompt", id: ev.payload.request_id,
-               req: { variant: "sudo", ...ev.payload } }
-
-    case "secret.request":
-      return { kind: "prompt", id: ev.payload.request_id,
-               req: { variant: "secret", ...ev.payload } }
-
-    case "terminal.read.request":
-      return { kind: "prompt", id: ev.payload.request_id,
-               req: { variant: "terminal-read", ...ev.payload } }
+    case "request.cancel":
+      return { kind: "prompt.cancel", id: ev.payload.id }
 
     case "background.complete":
       side.onBackground?.(ev.payload.task_id, ev.payload.text)

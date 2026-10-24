@@ -11,6 +11,8 @@ import { useDialog } from "../ui/dialog"
 import { useToast } from "../ui/toast"
 import { openAlert } from "../dialogs/alert"
 import { mapEvent } from "../context/events"
+import { shouldRemember } from "../context/approval-memory"
+import { prompt, type ServerRequest } from "../context/server-requests"
 import { deriveSkin, type SkinState } from "../context/skin"
 import { home } from "../home"
 import { useBackground } from "./background"
@@ -216,14 +218,6 @@ export function useStream(c: Ctx) {
       },
       onStatus: (text) => x.setStatus(text),
       onSessionTitle: retitle,
-      onApprovalRemembered: (fallback) => {
-        const sid = x.sidRef.current
-        void gw.request("approval.respond", { choice: "always" }).catch((err: Error) => {
-          if (ctx.current.sidRef.current !== sid) return
-          x.dispatch(fallback)
-          toast.show({ variant: "error", message: err.message })
-        })
-      },
       onSkin: (s) => x.setSkin(deriveSkin(s)),
       onVoiceStatus: x.onVoiceStatus,
       onVoiceTranscript: x.onVoiceTranscript,
@@ -256,6 +250,26 @@ export function useStream(c: Ctx) {
     if (action.kind === "error") x.setErrorPulse(true)
     x.dispatch(action)
   }, [gw, dialog, toast, flush, bg, retitle])
+
+  useEffect(() => {
+    const receive = (frame: ServerRequest) => {
+      const req = prompt(frame)
+      if (!req || req.session_id !== ctx.current.sidRef.current) return
+      flush()
+      const action: Action = { kind: "prompt", id: req.id, req }
+      if (req.variant === "approval" && req.allow_permanent !== false && (!req.choices?.length || req.choices.includes("always")) && shouldRemember(req)) {
+        void gw.answer(req.id, { choice: "always" }).catch((err: Error) => {
+          if (ctx.current.sidRef.current !== req.session_id) return
+          ctx.current.dispatch(action)
+          toast.show({ variant: "error", message: err.message })
+        })
+        return
+      }
+      ctx.current.dispatch(action)
+    }
+    gw.on("request", receive)
+    return () => { gw.off("request", receive) }
+  }, [gw, flush, toast])
 
   useGatewayEvent(handle)
 

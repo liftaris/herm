@@ -60,7 +60,6 @@ import { sessionCapabilities } from "./app/sessionCapabilities"
 import { useGitBranch } from "./utils/git"
 import type { HermPlugin } from "./plugins/types"
 import { useMessageActions } from "./app/useMessageActions"
-import { backend } from "./context/backend-contract"
 
 type AppProps = {
   initialTheme?: string
@@ -172,15 +171,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
   const [hideSidebar, setHideSidebar] = useState(false)
   const [usage, setUsage] = useState<Usage | undefined>(undefined)
   const [info, setInfo] = useState<SessionInfo | null>(null)
-  const [contract, setContract] = useState(() => backend.backendContract(null))
-  const recordInfo = useCallback((next: SessionInfo | null) => {
-    setInfo(next)
-    setContract(prev => {
-      const state = backend.backendContract(next)
-      return state.reason === "missing" && prev.supported ? prev : state
-    })
-  }, [])
-  const capabilities = sessionCapabilities({ sid, ready, streaming: active, contract })
+  const capabilities = sessionCapabilities({ sid, ready, streaming: active })
   const [title, setTitle] = useState("")
   const caption = title.trim()
   const titleRef = useRef(caption); titleRef.current = caption
@@ -441,7 +432,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
 
   const stream = useStream({
     dispatch, session, launchRef, sidRef, sessionStart, goalHook,
-    setSid, setDurable, setInfo: recordInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setSplash, setErrorPulse, settle,
+    setSid, setDurable, setInfo, setReady, setTitle, setBusy, setStarting, setUsage, setStatus, setSkin, setSplash, setErrorPulse, settle,
     onVoiceStatus: state => {
       voice.setRecording(state === "listening" || state === "recording")
       voice.setProcessing(state === "transcribing" || state === "processing")
@@ -495,7 +486,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
       setSid(r.id)
       setDurable(r.key)
       launchRef.current = { mode: "resume", sid: r.key, splash: false }
-      if (r.info) { recordInfo(r.info); setUsage(r.info.usage) }
+      if (r.info) { setInfo(r.info); setUsage(r.info.usage) }
       setReady(true)
       setStarting(false)
       setStatus("")
@@ -532,7 +523,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
       setDurable(res.key)
       launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
-        recordInfo(res.info)
+        setInfo(res.info)
         setUsage(res.info.usage)
       }
       setReady(true)
@@ -582,7 +573,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
       setDurable(res.key)
       launchRef.current = { mode: "resume", sid: res.key, splash: false }
       if (res.info) {
-        recordInfo(res.info)
+        setInfo(res.info)
         setUsage(res.info.usage)
       }
       sessionStart.current = res.startedAt ?? Date.now()
@@ -650,7 +641,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
   const slash = useSlash({
     dispatch, session, turnRef, queueRef, sendRef, composer, summoned, undone,
     capabilities, info, sid, resumeId: durable || sid, title: caption, skin,
-    setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo: recordInfo, setUsage, setTitle,
+    setQueue, setFocusRegion, setSplash, setAttachments: updateAttachments, setInfo, setUsage, setTitle,
     newSession, switchSession, activateSession, rewind, goTo, attachClipboard, voiceToggle: voice.toggle,
   })
   const send = useCallback(async (raw: string) => {
@@ -749,12 +740,10 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
   sendRef.current = send
 
   const blocked = useCallback(() => {
-    const msg = capabilities.contractMessage
-    if (!msg) return
-    const text = `${msg} Blocked prompt.submit.`
+    const text = "No connected session"
     dispatch({ kind: "system", text: `submit failed: ${text}` })
     toast.show({ variant: "error", message: text })
-  }, [capabilities.contractMessage, toast])
+  }, [toast])
 
   // Shell mode submit — `shell.exec` is a plain subprocess (no pty,
   // 30s cap, gateway cwd) with detect_dangerous_command blocklist.

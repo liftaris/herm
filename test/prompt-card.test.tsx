@@ -6,11 +6,11 @@ import type { PromptPart, Part } from "../src/types/message"
 
 const approval = (over: Partial<Extract<PromptPart["req"], { variant: "approval" }>> = {}): PromptPart => ({
   type: "prompt", id: "a1", variant: "approval",
-  req: { variant: "approval", command: "rm -rf /tmp/x", description: "recursive rm", ...over },
+  req: { id: "a1", session_id: "test-sid", request_id: "approval-1", variant: "approval", command: "rm -rf /tmp/x", description: "recursive rm", ...over },
 })
 
 describe("PromptCard.Approval", () => {
-  test("renders command + pattern_keys; 1..4/Enter/Esc dispatch approval.respond", async () => {
+  test("renders command + pattern_keys; 1..4/Enter/Esc dispatch answer", async () => {
     const gw = new MockGateway(); gw.ok = true
     const ref = createRef<PromptCardHandle>()
     const answers: string[] = []
@@ -30,12 +30,12 @@ describe("PromptCard.Approval", () => {
 
     act(() => ref.current!.feed({ name: "2" } as never))
     await t.settle()
-    expect(gw.last("approval.respond")?.params.choice).toBe("session")
+    expect(gw.last("answer")?.params.choice).toBe("session")
     expect(answers).toEqual(["Allow this session"])
     // second send is ignored (done latch)
     act(() => ref.current!.feed({ name: "4" } as never))
     await t.settle()
-    expect(gw.calls.filter(c => c.method === "approval.respond").length).toBe(1)
+    expect(gw.calls.filter(c => c.method === "answer").length).toBe(1)
   })
 
   test("←/→ wraps, Enter sends selection", async () => {
@@ -48,7 +48,7 @@ describe("PromptCard.Approval", () => {
     act(() => ref.current!.feed({ name: "left" } as never))
     act(() => ref.current!.feed({ name: "return" } as never))
     await t.settle()
-    expect(gw.last("approval.respond")?.params.choice).toBe("deny")
+    expect(gw.last("answer")?.params.choice).toBe("deny")
   })
 
   test("steer opens input, submits session.steer, and keeps approval pending", async () => {
@@ -68,7 +68,7 @@ describe("PromptCard.Approval", () => {
     act(() => t.keys.pressEnter())
     await until(t, () => t.gw.last("session.steer")?.params.text === "use ls first")
 
-    expect(gw.last("approval.respond")).toBeUndefined()
+    expect(gw.last("answer")).toBeUndefined()
     expect(answers).toEqual([])
     expect(t.frame()).toContain("steer sent")
     expect(t.frame()).toContain("Deny")
@@ -88,7 +88,7 @@ describe("PromptCard.Approval", () => {
     await until(t, () => t.frame().includes("s steer"))
 
     expect(gw.last("session.steer")).toBeUndefined()
-    expect(gw.last("approval.respond")).toBeUndefined()
+    expect(gw.last("answer")).toBeUndefined()
   })
 
 
@@ -101,7 +101,7 @@ describe("PromptCard.Approval", () => {
         }} onAnswer={() => {}} />
         <PromptCard part={{
           type: "prompt", id: "s1", variant: "secret",
-          req: { variant: "secret", request_id: "s1", prompt: "paste token hunter2", env_var: "API_KEY" },
+          req: { variant: "secret", id: "s1", session_id: "test-sid", prompt: "paste token hunter2", env_var: "API_KEY" },
           answered: { label: "(provided)", ok: true, at: 0, question: "Secret: API_KEY" },
         }} onAnswer={() => {}} />
       </box>,
@@ -121,7 +121,7 @@ describe("PromptCard.Clarify", () => {
     const ref = createRef<PromptCardHandle>()
     const part: PromptPart = {
       type: "prompt", id: "c1", variant: "clarify",
-      req: { variant: "clarify", request_id: "r1", question: "which?", choices: ["A", "B"] },
+      req: { variant: "clarify", id: "r1", session_id: "test-sid", questions: [{ qid: "q1", multi_select: false, question: "which?", choices: ["A", "B"] }] },
     }
     await using t = await mountNode(
       <PromptCard ref={ref} part={part} onAnswer={() => {}} />, { gw },
@@ -131,7 +131,7 @@ describe("PromptCard.Clarify", () => {
     act(() => ref.current!.feed({ name: "down" } as never))
     act(() => ref.current!.feed({ name: "return" } as never))
     await t.settle()
-    expect(gw.last("clarify.respond")?.params).toMatchObject({ request_id: "r1", answer: "B" })
+    expect(gw.last("answer")?.params).toMatchObject({ id: "r1", answers: { q1: "B" }, outcome: "submitted" })
   })
 
   test("answered outcomes keep question and selected/freeform answers visible", async () => {
@@ -140,12 +140,12 @@ describe("PromptCard.Clarify", () => {
       <box flexDirection="column">
         <PromptCard part={{
           type: "prompt", id: "c1", variant: "clarify",
-          req: { variant: "clarify", request_id: "r1", question: "which one?", choices: ["red", "blue"] },
+          req: { variant: "clarify", id: "r1", session_id: "test-sid", questions: [{ qid: "q1", multi_select: false, question: "which one?", choices: ["red", "blue"] }] },
           answered: { label: "blue", ok: true, at: 0, question: "which one?" },
         }} onAnswer={() => {}} />
         <PromptCard part={{
           type: "prompt", id: "c2", variant: "clarify",
-          req: { variant: "clarify", request_id: "r2", question: long, choices: null },
+          req: { variant: "clarify", id: "r2", session_id: "test-sid", questions: [{ qid: "q1", multi_select: false, question: long, choices: null }] },
           answered: { label: "Use the shorter terminal-friendly wording", ok: true, at: 0, question: long },
         }} onAnswer={() => {}} />
       </box>,

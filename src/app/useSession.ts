@@ -5,6 +5,8 @@ import * as preferences from "../context/preferences"
 import { sdb } from "../service/sessions-db"
 import { useGateway } from "../context/gateway"
 import { transcriptToMessages } from "./turnReducer"
+import { parts, type ServerRequest } from "../context/server-requests"
+import { mid } from "../types/message"
 import type { Launch } from "./launch"
 import type {
   SessionResumeResponse,
@@ -47,6 +49,11 @@ type Close = { preserveBackground?: boolean }
 export const normalize = (sid: string): string =>
   sid.trim().replace(/\.json$/i, "").replace(/^session_(?=\d{8}_)/, "")
 
+function replay(requests?: ServerRequest[]): Message[] {
+  const prompts = parts(requests)
+  return prompts.length ? [{ id: mid(), role: "assistant", parts: prompts, timestamp: Date.now() / 1000 }] : []
+}
+
 type SessionOps = {
   /** Establish the initial session per launch intent. */
   boot: (launch: Launch) => Promise<Booted>
@@ -84,7 +91,7 @@ export function useSession(): SessionOps {
     gw.setSession(id)
     preferences.set("lastSessionId", key)
     const messages = res.messages?.length ? transcriptToMessages(res.messages) : []
-    return { id, key, messages, info: res.info }
+    return { id, key, messages: [...messages, ...replay(res.open_requests)], info: res.info }
   }, [gw])
 
   // No `cols` param and no `terminal.resize` RPC on SIGWINCH: herm renders
@@ -114,7 +121,7 @@ export function useSession(): SessionOps {
       id,
       key,
       info: res.info,
-      messages: [...history, ...inflightMessages(res.inflight)],
+      messages: [...history, ...inflightMessages(res.inflight), ...replay(res.open_requests)],
       running,
       startedAt: res.started_at ? res.started_at * 1000 : undefined,
       status: res.status,
