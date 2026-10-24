@@ -48,23 +48,23 @@
     "screenshot:styled": "bun scripts/styled-screenshot.tsx"
   },
   "dependencies": {
-    "@opentui/core": "0.4.3",
-    "@opentui/react": "0.4.3",
+    "@opentui/core": "0.6.8",
+    "@opentui/react": "0.6.8",
     "eikon": "github:liftaris/eikon#03366100df3a91533b4206177a1a524a4463d5c2",
-    "open": "^11.0.0",
-    "react": "^19.2.5",
+    "open": "^11.0.4",
+    "react": "^19.3.1",
     "web-tree-sitter": "0.25.10",
-    "yaml": "^2.8.4"
+    "yaml": "^2.9.1"
   },
   "overrides": {
-    "@opentui/core": "0.4.3",
-    "@opentui/react": "0.4.3"
+    "@opentui/core": "0.6.8",
+    "@opentui/react": "0.6.8"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@types/bun": "1.4.4",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.3.0",
     "semantic-release": "^25.0.3",
     "typescript": "^7.0.2",
     "typescript-api": "npm:typescript@^5.9.3"

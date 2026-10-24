@@ -4,17 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { editInEditor } from "../src/utils/editor"
 
-// A real CliRenderer isn't needed — editInEditor only calls suspend/
-// currentRenderBuffer.clear/resume/requestRender on it.
 const fake = () => {
   const calls: string[] = []
   return {
     calls,
     renderer: {
-      suspend: () => calls.push("suspend"),
-      resume: () => calls.push("resume"),
-      requestRender: () => calls.push("request"),
-      currentRenderBuffer: { clear: () => calls.push("clear") },
+      isDestroyed: false,
+      suspend: async () => { calls.push("suspend") },
+      resume: async () => { calls.push("resume") },
     },
   }
 }
@@ -31,8 +28,7 @@ describe("editInEditor", () => {
     delete process.env.VISUAL
     delete process.env.EDITOR
     const f = fake()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await editInEditor(f.renderer as any, "seed")
+    const out = await editInEditor(f.renderer, "seed")
     expect(out).toBeUndefined()
     expect(f.calls).toEqual([])
   })
@@ -46,12 +42,26 @@ describe("editInEditor", () => {
     delete process.env.EDITOR
 
     const f = fake()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await editInEditor(f.renderer as any, "initial seed")
+    const restoring = Promise.withResolvers<void>()
+    const restored = Promise.withResolvers<void>()
+    f.renderer.resume = async () => {
+      f.calls.push("resume")
+      restoring.resolve()
+      await restored.promise
+    }
+    let returned = false
+    const pending = editInEditor(f.renderer, "initial seed").then(text => {
+      returned = true
+      return text
+    })
+    await restoring.promise
+    await Promise.resolve()
+    expect(returned).toBe(false)
+    restored.resolve()
+    const out = await pending
 
     expect(out).toBe("line1\nline2")
-    // Lifecycle: suspend → clear → (spawn) → clear → resume → request
-    expect(f.calls).toEqual(["suspend", "clear", "clear", "resume", "request"])
+    expect(f.calls).toEqual(["suspend", "resume"])
 
     rmSync(script, { force: true })
   })
@@ -63,8 +73,7 @@ describe("editInEditor", () => {
     process.env.VISUAL = script
 
     const f = fake()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await editInEditor(f.renderer as any, "seed", ".txt")
+    const out = await editInEditor(f.renderer, "seed", ".txt")
     expect(out).toBe("txt file")
 
     rmSync(script, { force: true })
@@ -77,7 +86,7 @@ describe("editInEditor", () => {
     process.env.VISUAL = ""
     process.env.EDITOR = `'${script}' --flag`
     const f = fake()
-    const out = await editInEditor(f.renderer as never, "kept")
+    const out = await editInEditor(f.renderer, "kept")
     expect(out).toBe("quoted editor")
     rmSync(script, { force: true })
   })
@@ -89,11 +98,10 @@ describe("editInEditor", () => {
     process.env.VISUAL = script
 
     const f = fake()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await editInEditor(f.renderer as any, "seed")
+    const out = await editInEditor(f.renderer, "seed")
     expect(out).toBeUndefined()
     expect(f.calls[0]).toBe("suspend")
-    expect(f.calls[f.calls.length - 1]).toBe("request")
+    expect(f.calls[f.calls.length - 1]).toBe("resume")
 
     rmSync(script, { force: true })
   })
@@ -103,21 +111,7 @@ describe("editInEditor", () => {
     delete process.env.EDITOR
     const f = fake()
 
-    await expect(editInEditor(f.renderer as never, "seed")).rejects.toThrow("editor exited")
-    expect(f.calls).toEqual(["suspend", "clear", "clear", "resume", "request"])
-  })
-
-  test("initial buffer clear failure still resumes the renderer", async () => {
-    process.env.VISUAL = "/bin/true"
-    const f = fake()
-    let clears = 0
-    f.renderer.currentRenderBuffer.clear = () => {
-      f.calls.push("clear")
-      if (clears++ === 0) throw new Error("clear exploded")
-      return f.calls.length
-    }
-
-    await expect(editInEditor(f.renderer as never, "seed")).rejects.toThrow("clear exploded")
-    expect(f.calls).toEqual(["suspend", "clear", "clear", "resume", "request"])
+    await expect(editInEditor(f.renderer, "seed")).rejects.toThrow("editor exited")
+    expect(f.calls).toEqual(["suspend", "resume"])
   })
 })

@@ -256,7 +256,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
       .catch((err: Error) => toast.show({ variant: "error", message: err.message }))
   }, [toast])
 
-  const run = useCallback((c: SlashCommand, arg = "") => {
+  const run = useCallback(async (c: SlashCommand, arg = "") => {
     const x = ctx.current
     if (c.target === "local") {
       switch (c.name) {
@@ -488,7 +488,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
           toast.show({ variant: "info", message: `mouse ${want ? "on" : "off"}` })
           return
         }
-        case "redraw": redraw(renderer); return
+        case "redraw": await redraw(renderer); return
         case "browser": {
           // Route /browser through browser.manage RPC instead of slash.exec
           // so BROWSER_CDP_URL is set in the gateway process where AIAgent runs.

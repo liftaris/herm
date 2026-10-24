@@ -164,7 +164,7 @@ export const Analytics = memo((props: { focused?: boolean; load?: AnalyticsQuery
             <Col w={9} right fg={theme.textMuted}>cost</Col>
           </Hdr>
         </box>
-        <scrollbox scrollY flexGrow={1} flexShrink={1} minHeight={1}>
+        <scrollbox scrollY flexGrow={1} flexShrink={1} flexBasis={0} minHeight={1}>
           <box flexDirection="column" width="100%">
             {data.byModel.length === 0
               ? <box height={1}><text fg={theme.textMuted}>no sessions in range</text></box>

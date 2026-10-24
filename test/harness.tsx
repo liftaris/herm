@@ -11,6 +11,7 @@
 import { EventEmitter } from "events"
 import { act, type ReactNode } from "react"
 import { createRoot } from "@opentui/react"
+import { CliRenderEvents } from "@opentui/core"
 import { createTestRenderer, type MockInput, type MockMouse, type TestRenderer } from "@opentui/core/testing"
 import { App } from "../src/app"
 import type { Gateway } from "../src/context/gateway"
@@ -267,6 +268,12 @@ async function render(node: ReactNode, gw: MockGateway, opts: Opts): Promise<Har
   })
   // Match production before root.render() mounts selection-aware scrollboxes.
   setup.renderer.setMaxListeners(64)
+  let frame = ""
+  let spans: ReturnType<typeof setup.captureSpans> | undefined
+  setup.renderer.on(CliRenderEvents.FRAME, () => {
+    frame = setup.captureCharFrame()
+    spans = setup.captureSpans()
+  })
   root = createRoot(setup.renderer)
   act(() => { root?.render(node) })
 
@@ -309,8 +316,8 @@ async function render(node: ReactNode, gw: MockGateway, opts: Opts): Promise<Har
     keys: setup.mockInput,
     mouse: setup.mockMouse,
     gw,
-    frame: setup.captureCharFrame,
-    spans: setup.captureSpans,
+    frame: () => frame,
+    spans: () => spans,
     settle,
     resize: setup.resize,
     destroy,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { useEffect } from "react"
+import { act, useEffect } from "react"
 import { MockGateway, mountNode } from "./harness"
 import { useGateway } from "../src/context/gateway"
 
@@ -94,4 +94,20 @@ describe("MockGateway strictness", () => {
     await expect(t.settle()).rejects.toThrow("late.unknown")
     expect(gw.killed).toBe(true)
   })
+})
+
+test("frame readers retain the displayed frame while the next frame is painting", async () => {
+  const frames: string[] = []
+  const failures: unknown[] = []
+  let observe = () => {}
+  await using t = await mountNode(<box renderBefore={() => observe()}><text>displayed marker</text></box>)
+  observe = () => {
+    try { frames.push(t.frame()); t.spans() }
+    catch (error) { failures.push(error) }
+  }
+  act(() => t.renderer.requestRender())
+  await t.settle()
+  expect(frames.length + failures.length).toBeGreaterThan(0)
+  expect(failures).toEqual([])
+  expect(frames.every(frame => frame.includes("displayed marker"))).toBe(true)
 })
