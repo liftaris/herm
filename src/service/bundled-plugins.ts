@@ -49,16 +49,14 @@ export function sync(): string[] {
   const out: string[] = []
   for (const e of readdirSync(src, { withFileTypes: true })) {
     if (!e.isDirectory()) continue
-    try {
-      const dst = join(root, e.name)
-      const fresh = !existsSync(dst)
-      if (fresh) {
-        mkdirSync(root, { recursive: true })
-        cpSync(join(src, e.name), dst, { recursive: true })
-        out.push(e.name)
-      }
-      if (fresh || ours(dst)) enable(e.name)
-    } catch {}
+    const dst = join(root, e.name)
+    const fresh = !existsSync(dst)
+    if (fresh) {
+      mkdirSync(root, { recursive: true })
+      cpSync(join(src, e.name), dst, { recursive: true })
+      out.push(e.name)
+    }
+    if (fresh || ours(dst)) enable(e.name)
   }
   return out
 }

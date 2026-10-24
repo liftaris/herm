@@ -31,11 +31,10 @@ type Preview = {
 
 function localCatalog(raw?: string) {
   if (!raw) return false
-  try {
-    const url = new URL(raw)
-    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "")
-    return url.protocol === "file:" || host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1" || host.endsWith(".localhost")
-  } catch { return false }
+  const url = URL.parse(raw)
+  if (!url) return false
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  return url.protocol === "file:" || host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1" || host.endsWith(".localhost")
 }
 
 const filterRows = (rows: MarketplaceRow[], query: string) => {
@@ -94,9 +93,10 @@ export const EikonMarketplace = memo((props: {
         })
         perf.count("market:preview:ready")
       })
-      .catch(() => {
+      .catch(err => {
         if (previewSeq.current !== id) return
         setPreview(undefined)
+        toast.error(err)
         perf.count("market:preview:error")
       })
   }, [selected, state.service, previewState])
@@ -192,7 +192,7 @@ export const EikonMarketplace = memo((props: {
       actingRef.current = true
       setActing(true)
       try {
-        const sizes = !row.installed ? await svc.packageSizes(row.entry.identityKey).catch(() => undefined) : undefined
+        const sizes = !row.installed ? await svc.packageSizes(row.entry.identityKey) : undefined
         const pick = await openEikonMarketplaceAction(dialog, { row, sizes })
         if (!pick) return
         if (pick === "use") {
@@ -228,7 +228,7 @@ export const EikonMarketplace = memo((props: {
         setActing(false)
       }
     }
-    void run()
+    void run().catch(err => toast.error(err))
   }, [dialog, state.rows, state.service, sel, acting, toast, refreshMarket, query, removeSelected, delistSelected])
 
   useKeyboard(key => {

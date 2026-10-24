@@ -26,7 +26,9 @@ const skin = (path: string): string | null => {
       const name = (raw as { name?: unknown }).name
       if (typeof name === "string" && name.trim()) return name.trim()
     }
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   return null
 }
 

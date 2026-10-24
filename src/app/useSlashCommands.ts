@@ -1,6 +1,3 @@
-// Slash command catalog + live completion over RPC. Falls back to
-// LOCAL_COMMANDS when the gateway catalog is unavailable.
-//
 // Wire shape (tui_gateway/server.py @method("commands.catalog")):
 //   pairs:      [["/new", "desc"], ...]            — flat, includes skills + quick_commands
 //   categories: [{name, pairs: [["/new","…"],…]}]  — registry cmds only, grouped
@@ -10,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useGateway, useGatewayReady } from "../context/gateway"
+import { useToast } from "../ui/toast"
 import {
   LOCAL_NAMES,
   fallbacks,
@@ -23,13 +21,12 @@ const bare = (s: string) => (s[0] === "/" ? s.slice(1) : s)
 export function useSlashCommands() {
   const gw = useGateway()
   const ready = useGatewayReady()
+  const toast = useToast()
   const [cmds, setCmds] = useState<ReadonlyArray<SlashCommand>>(fallbacks)
 
   const fetch = useCallback(async () => {
     const res = await gw.request<CommandsCatalogResponse>("commands.catalog")
-      .catch(() => null)
     const fallback = fallbacks()
-    if (!res) { setCmds(fallback); return }
 
     // name → category (from categories[].pairs, slashed)
     const cat = new Map<string, string>()
@@ -77,7 +74,7 @@ export function useSlashCommands() {
     setCmds(sort([...locals, ...remote]))
   }, [gw])
 
-  useEffect(() => { if (ready) void fetch() }, [ready, fetch])
+  useEffect(() => { if (ready) void fetch().catch(err => toast.error(err)) }, [ready, fetch])
 
   return { cmds, refresh: fetch }
 }

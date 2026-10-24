@@ -635,7 +635,7 @@ export const EikonStudio = memo((props: {
   // at module scope — repeated mounts share one subprocess.
   useEffect(() => {
     let dead = false
-    void probeGen().then(c => { if (!dead) setGenOk(c) }).catch(() => {})
+    void probeGen().then(c => { if (!dead) setGenOk(c) }).catch(err => { if (!dead) toast.error(err) })
     return () => { dead = true }
   }, [])
 
@@ -653,7 +653,7 @@ export const EikonStudio = memo((props: {
     if (live || !s) return undefined
     const p = eikon.baked(s.name)
     if (!p) return undefined
-    try { return eikon.parseEikonFile(p) } catch { return undefined }
+    return eikon.parseEikonFile(p)
   }, [live, s?.name])
   const url = status?.sourceUrl
   useEffect(() => {

@@ -50,7 +50,10 @@ const open = (root: string, board: string) => {
   const cached = handles.get(path)
   const ino = (() => {
     try { return statSync(path).ino }
-    catch { return null }
+    catch (err) {
+      if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      return null
+    }
   })()
   if (cached?.ino === ino) return cached.db
   if (cached) {
@@ -58,22 +61,18 @@ const open = (root: string, board: string) => {
     handles.delete(path)
   }
   if (ino === null) return null
-  try {
-    const db = new Database(path)
-    db.exec(`PRAGMA busy_timeout=${timeout()}`)
-    try { db.exec("PRAGMA journal_mode=WAL") } catch {}
-    db.exec([
-      "PRAGMA synchronous=FULL",
-      "PRAGMA wal_autocheckpoint=100",
-      "PRAGMA secure_delete=ON",
-      "PRAGMA cell_size_check=ON",
-      "PRAGMA foreign_keys=ON",
-    ].join(";"))
-    handles.set(path, { db, ino })
-    return db
-  } catch {
-    return null
-  }
+  const db = new Database(path)
+  db.exec(`PRAGMA busy_timeout=${timeout()}`)
+  db.exec("PRAGMA journal_mode=WAL")
+  db.exec([
+    "PRAGMA synchronous=FULL",
+    "PRAGMA wal_autocheckpoint=100",
+    "PRAGMA secure_delete=ON",
+    "PRAGMA cell_size_check=ON",
+    "PRAGMA foreign_keys=ON",
+  ].join(";"))
+  handles.set(path, { db, ino })
+  return db
 }
 
 const check = (db: Database) => {

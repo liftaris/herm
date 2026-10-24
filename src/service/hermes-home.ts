@@ -194,7 +194,8 @@ export function readSkillFrontmatter(source: Source): { description: string; tag
     const fm = parseYaml(head.slice(3, end)) as Record<string, unknown>;
     const tags = Array.isArray(fm.tags) ? fm.tags.map(String) : [];
     return { description: String(fm.description ?? ""), tags };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return { description: "", tags: [] };
   }
 }
@@ -215,7 +216,7 @@ export interface SkillUsage {
 
 /**
  * Read ~/.hermes/skills/.usage.json. Keyed by skill name.
- * Returns empty record on any failure — absent sidecar is the default.
+ * An absent sidecar reads as an empty record.
  */
 export async function readSkillUsage(): Promise<Record<string, SkillUsage>> {
   try {
@@ -238,7 +239,8 @@ export async function readSkillUsage(): Promise<Record<string, SkillUsage>> {
       };
     }
     return out;
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return {};
   }
 }
@@ -264,7 +266,8 @@ export async function readCuratorState(): Promise<CuratorState | null> {
       paused: Boolean(raw.paused),
       run_count: Number(raw.run_count ?? 0),
     };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -295,7 +298,8 @@ export async function readLatestCuratorReport(): Promise<CuratorReportInfo | nul
     const source = makeSource(rel);
     const body = await Bun.file(source.file).text();
     return { source, content: body.trim(), runId };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -331,15 +335,24 @@ export function listCuratorRuns(): CuratorRun[] {
             added: c.added_this_run ?? 0,
             before: c.before ?? 0, after: c.after ?? 0,
           }];
-        } catch { return [] }
+        } catch (err) {
+          if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+          return []
+        }
       });
-  } catch { return [] }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return []
+  }
 }
 
 export async function readCuratorReport(id: string): Promise<string> {
   try {
     return (await Bun.file(hermesPath(`logs/curator/${id}/REPORT.md`)).text()).trim();
-  } catch { return "" }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return ""
+  }
 }
 
 /** Per-skill curator event, projected out of run.json so DetailPanel
@@ -392,9 +405,13 @@ export function indexCuratorLineage(): LineageIndex {
           push(p.name, { kind: "pruned", run, at, reason: p.reason })
         for (const n of j.added ?? [])
           push(n, { kind: "added", run, at })
-      } catch {}
+      } catch (err) {
+        if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      }
     }
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   for (const a of out.values()) a.sort((x, y) => y.at - x.at)
   return out
 }
@@ -420,7 +437,8 @@ export function readChangelog(): Changelog | null {
     const body = buf.toString("utf8", 0, n).trim();
     const line = body.split("\n").find(l => /^[-*·]/.test(l.trim()));
     return { source, headline: line?.replace(/^[-*·]\s*/, "").trim() ?? "", body };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -503,7 +521,8 @@ export async function readConfig(): Promise<HermesConfig | null> {
         },
       },
     };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -527,7 +546,8 @@ export async function readMemoryFile(
         charLimit > 0 ? Math.round((content.length / charLimit) * 100) : 0,
       entryCount,
     };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -547,7 +567,8 @@ export async function readLiveSessions(): Promise<
     if (!(await file.exists())) return {};
     const text = await file.text();
     return JSON.parse(text);
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return {};
   }
 }
@@ -595,7 +616,9 @@ function discoverMemoryProviders(): string[] {
   try {
     for (const e of readdirSync(hermesPath("hermes-agent/plugins/memory"), { withFileTypes: true }))
       if (e.isDirectory() && !e.name.startsWith("_")) names.add(e.name);
-  } catch {}
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
   return [...names];
 }
 
@@ -628,7 +651,9 @@ export async function readMemoryProviders(
           const st = await file.stat();
           if (st) cfg["db_size"] = `${Math.round(st.size / 1024)}KB`;
         }
-      } catch {}
+      } catch (err) {
+        if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+      }
     }
     out.push({ name, active: name === activeProvider, config: cfg });
   }
@@ -646,7 +671,8 @@ export async function readSoul(): Promise<SoulInfo | null> {
       tokenEstimate: tokenCount(text),
       content: text,
     };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
@@ -684,15 +710,18 @@ export async function readToolsFromLatestSession(): Promise<ToolsInfo | null> {
       source: makeSource(relative, latestPath),
       tools,
     };
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
 }
 
 /** Read system prompt from the most recent state.db session that has a full one */
 export function readSystemPromptInfo(): SystemPromptInfo | null {
+  const path = hermesPath("state.db")
+  if (!existsSync(path)) return null
+  const db = new Database(path, { readonly: true });
   try {
-    const db = new Database(hermesPath("state.db"), { readwrite: true, create: false });
     // Short prompts (~700 chars) are the generic fallback without SOUL/memory/skills.
     const row = db
       .query(
@@ -702,7 +731,6 @@ export function readSystemPromptInfo(): SystemPromptInfo | null {
          ORDER BY started_at DESC LIMIT 1`,
       )
       .get() as { id: string; system_prompt: string } | null;
-    db.close();
     if (!row) return null;
     return {
       source: makeSource("state.db"),
@@ -711,8 +739,8 @@ export function readSystemPromptInfo(): SystemPromptInfo | null {
       totalChars: row.system_prompt.length,
       tokenEstimate: tokenCount(row.system_prompt),
     };
-  } catch {
-    return null;
+  } finally {
+    db.close();
   }
 }
 
@@ -731,7 +759,8 @@ export async function readCronOutput(
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return null;
   }
   const md = entries.filter(f => f.endsWith(".md")).sort().reverse();
@@ -765,7 +794,8 @@ export async function readEnvFile(): Promise<Record<string, string>> {
       vars[envKey(trimmed.slice(0, eq))] = trimmed.slice(eq + 1);
     }
     return vars;
-  } catch {
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
     return {};
   }
 }
@@ -775,7 +805,9 @@ export async function writeEnvVar(key: string, value: string): Promise<void> {
   let text = "";
   try {
     text = await Bun.file(envPath()).text();
-  } catch { /* file may not exist */ }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+  }
 
   const lines = text.split("\n");
   let found = false;
@@ -797,7 +829,10 @@ export async function removeEnvVar(key: string): Promise<void> {
   let text = "";
   try {
     text = await Bun.file(envPath()).text();
-  } catch { return; }
+  } catch (err) {
+    if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) throw err
+    return;
+  }
 
   const lines = text.split("\n").filter(line => {
     const eq = line.trim().indexOf("=")

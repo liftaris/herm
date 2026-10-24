@@ -73,46 +73,29 @@ function writeOsc52(text: string): void {
 
 async function nativeCopy(text: string): Promise<void> {
   const os = platform()
-
-  if (os === "darwin") {
-    const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" })
-    proc.stdin.write(text)
-    proc.stdin.end()
-    await proc.exited
-    return
+  const commands = os === "darwin" ? [["pbcopy"]]
+    : os === "win32" ? [["clip.exe"]]
+    : [
+      ...(process.env.WAYLAND_DISPLAY ? [["wl-copy"]] : []),
+      ["xclip", "-selection", "clipboard"],
+      ["xsel", "--clipboard", "--input"],
+    ]
+  const command = commands.find(args => Bun.which(args[0]!)) ?? commands[commands.length - 1]!
+  const proc = Bun.spawn(command, { stdin: "pipe", stdout: "ignore", stderr: "pipe" })
+  proc.stdin.write(text)
+  proc.stdin.end()
+  const code = await proc.exited
+  if (code !== 0) {
+    const error = await new Response(proc.stderr).text()
+    throw new Error(error.trim() || `${command[0]} exited with code ${code}`)
   }
-
-  if (os === "linux") {
-    if (process.env["WAYLAND_DISPLAY"]) {
-      try {
-        const proc = Bun.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited
-        return
-      } catch {}
-    }
-    try {
-      const proc = Bun.spawn(["xclip", "-selection", "clipboard"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-      proc.stdin.write(text)
-      proc.stdin.end()
-      await proc.exited
-      return
-    } catch {}
-    try {
-      const proc = Bun.spawn(["xsel", "--clipboard", "--input"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-      proc.stdin.write(text)
-      proc.stdin.end()
-      await proc.exited
-      return
-    } catch {}
-  }
+  await proc.stderr.cancel()
 }
 
 export async function copy(text: string): Promise<void> {
   writeOsc52(text)
   if (shouldUseNativeClipboard()) {
-    await nativeCopy(text).catch(() => {})
+    await nativeCopy(text)
   }
 }
 
@@ -120,10 +103,14 @@ function copied(toast: ToastContext, message = "Copied to clipboard"): void {
   toast.show({ key: "clipboard.copy", variant: "success", message })
 }
 
-export function copyText(text: string, toast?: ToastContext, message = "Copied to clipboard"): Promise<void> {
-  const p = copy(text)
+export async function copyText(text: string, toast?: ToastContext, message = "Copied to clipboard"): Promise<void> {
+  try { await copy(text) }
+  catch (err) {
+    if (!toast) throw err
+    toast.error(err instanceof Error ? err : new Error(String(err)))
+    return
+  }
   if (toast) copied(toast, message)
-  return p
 }
 
 export function copySelection(renderer: { getSelection: () => { getSelectedText: () => string } | null; clearSelection: () => void }, toast?: ToastContext): boolean {
@@ -131,7 +118,7 @@ export function copySelection(renderer: { getSelection: () => { getSelectedText:
   const text = sel?.getSelectedText()
   if (!text) return false
 
-  copyText(text, toast).catch(() => {})
+  void copyText(text, toast)
   renderer.clearSelection()
   return true
 }

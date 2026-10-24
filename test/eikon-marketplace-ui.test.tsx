@@ -242,6 +242,17 @@ describe("EikonMarketplace tab", () => {
     fx.srv.stop()
   })
 
+  test("package metadata failures reach the action toast", async () => {
+    const fx = catalog([{ path: "/eikons/ares/manifest.json", body: "metadata denied", status: 503 }])
+    process.env.EIKON_URL = fx.base
+    await using t = await mountNode(group(), { width: 160, height: 48 })
+    await until(t, () => t.frame().includes("ARES-IDLE"))
+    act(() => t.keys.pressEnter())
+    await until(t, () => t.frame().includes("503"))
+    expect(t.frame()).toContain("503")
+    fx.srv.stop()
+  })
+
   test("repeated Enter while sizes load starts one catalog action", async () => {
     let hits = 0
     const man = {
@@ -452,8 +463,8 @@ describe("EikonMarketplace tab", () => {
     const fx = catalog([{ path: "/eikons/ares/ares.eikon", body: "missing", status: 500 }])
     process.env.EIKON_URL = fx.base
     await using t = await mountNode(group(), { width: 160, height: 48 })
-    await until(t, () => fx.seen.includes("/eikons/ares/ares.eikon"))
-    await t.settle()
+    await until(t, () => t.frame().includes("500"))
+    expect(t.frame()).toContain("500")
     expect(t.frame()).not.toContain("ARES-IDLE")
     fx.srv.stop()
   })

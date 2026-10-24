@@ -32,7 +32,6 @@ export function get(name: string): ThemeJson | undefined {
   return cache.get(name)
 }
 
-/** Preload a theme, resolving silently on failure. */
 export async function prime(name: string): Promise<void> {
-  await load(name).catch(() => undefined)
+  await load(name)
 }

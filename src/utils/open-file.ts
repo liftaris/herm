@@ -7,7 +7,7 @@ import { platform } from "node:os"
 import open from "open"
 
 export function openFile(path: string): void {
-  open(path).catch(() => {})
+  void open(path)
 }
 
 export type Deps = {
@@ -15,7 +15,7 @@ export type Deps = {
   platform?: () => string
 }
 
-/** Returns false if the URL was rejected, no opener is known, or spawn threw. */
+/** Returns false if the URL was rejected or no opener is known. */
 export function openUrl(raw: string, deps: Deps = {}): boolean {
   const url = parseSafeUrl(raw)
   if (!url) return false
@@ -25,21 +25,12 @@ export function openUrl(raw: string, deps: Deps = {}): boolean {
   const cmd = openCommand(id)
   if (!cmd) return false
 
-  // spawn throws synchronously on argv-validation failures (NUL bytes).
-  let child
-  try {
-    child = spawnFn(cmd.command, [...cmd.args, url.toString()], {
-      // detached: closing the TUI shouldn't kill the browser.
-      // stdio ignore: Chrome's stderr otherwise lands in the alt screen.
-      detached: true,
-      stdio: "ignore",
-    } satisfies SpawnOptions)
-  } catch {
-    return false
-  }
+  const child = spawnFn(cmd.command, [...cmd.args, url.toString()], {
+    // stdio ignore: Chrome's stderr otherwise lands in the alt screen.
+    detached: true,
+    stdio: "ignore",
+  } satisfies SpawnOptions)
 
-  // ENOENT surfaces as an async 'error' event; unhandled it crashes Node.
-  child.once("error", () => {})
   child.unref()
 
   return true
@@ -48,12 +39,8 @@ export function openUrl(raw: string, deps: Deps = {}): boolean {
 export function parseSafeUrl(value: string): null | URL {
   if (!value || typeof value !== "string") return null
 
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
-  }
+  const url = URL.parse(value)
+  if (!url) return null
 
   // file:, data:, javascript: etc. would invoke a local handler on click.
   if (url.protocol !== "http:" && url.protocol !== "https:") return null

@@ -16,7 +16,7 @@ import { prefs } from "../context/preferences"
 import { openCountdown } from "../dialogs/countdown"
 import { io } from "../io"
 
-type Toast = { show: (o: { variant: "success"; title?: string; message: string; duration?: number }) => void }
+type Toast = { show: (o: { variant: "success" | "error"; title?: string; message: string; duration?: number }) => void }
 
 export type GoalHook = {
   /** Called from onTurnComplete. Reads goal state, fires if done. */
@@ -62,7 +62,7 @@ export function makeGoalHook(dialog: DialogContext, toast: Toast): GoalHook {
         const list = s.checklist ?? []
         const done = list.filter(i => i.status === "completed" || i.status === "impossible").length
         act(s.goal, done, list.length)
-      }).catch(() => {})
+      }).catch(err => toast.show({ variant: "error", message: err instanceof Error ? err.message : String(err) }))
     },
   }
 }
