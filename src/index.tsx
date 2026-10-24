@@ -15,6 +15,7 @@ import { warm as warmIO } from "./io";
 import { skills } from "./service/bundled-skills";
 import { plugins } from "./service/bundled-plugins";
 import * as control from "./app/control";
+import { installReloadSignal } from "./app/reloadSignal";
 import * as preferences from "./context/preferences";
 import { resetTerminalModes, installExitResetHooks } from "./utils/terminal-reset";
 import { clampStdoutDimensions } from "./utils/terminal-size";
@@ -120,6 +121,10 @@ const main = async () => {
 
   // Periodic memory monitor (every 15s when PERF=1)
   perf.monitor(15_000)
+
+  // Retint in place when the desktop switches themes, instead of
+  // requiring a relaunch. See src/app/reloadSignal.ts.
+  installReloadSignal()
 
   // Control server for headless interaction (CONTROL=1)
   control.start()
