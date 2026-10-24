@@ -1,7 +1,10 @@
 import { join } from "node:path"
 import { homedir } from "node:os"
-import { z } from "zod"
 import { attach } from "../src/context/owner-attach"
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
 
 const profile = Bun.argv.indexOf("--profile")
 if (profile >= 0 && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(Bun.argv[profile + 1] ?? "")) throw new Error("--profile requires a profile name")
@@ -32,8 +35,13 @@ ws.addEventListener("message", async event => {
   try {
     const ready = performance.now() - start
     await request("client.capabilities", { server_requests: true })
-    const describe = z.object({ profile_id: z.string(), capabilities: z.array(z.string()), session_create: z.object({ sources: z.array(z.string()) }) }).parse(await request("runtime.describe"))
-    const sessions = z.object({ sessions: z.array(z.unknown()) }).parse(await request("session.list", { scope: "live", limit: 5 }))
+    const describe = await request("runtime.describe")
+    if (!record(describe) || typeof describe.profile_id !== "string" || !Array.isArray(describe.capabilities)
+      || describe.capabilities.some(value => typeof value !== "string") || !record(describe.session_create)
+      || !Array.isArray(describe.session_create.sources) || describe.session_create.sources.some(value => typeof value !== "string"))
+      throw new Error("invalid runtime.describe response")
+    const sessions = await request("session.list", { scope: "live", limit: 5 })
+    if (!record(sessions) || !Array.isArray(sessions.sessions)) throw new Error("invalid session.list response")
     await request("gateway.ping")
     console.log(JSON.stringify({ profile: home, protocol: ws.protocol, ready_ms: ready, profile_id: describe.profile_id, capabilities: describe.capabilities, sources: describe.session_create.sources, live_count: sessions.sessions.length }, null, 2))
   } finally { clearTimeout(timer); ws.close() }

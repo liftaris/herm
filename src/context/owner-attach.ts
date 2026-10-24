@@ -3,17 +3,10 @@ import { constants, lstatSync, openSync, fstatSync, readFileSync, closeSync, rea
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { homedir } from "node:os"
 import { createHash } from "node:crypto"
-import { z } from "zod"
 
-const identity = z.object({
-  runtime_protocol: z.literal(1),
-  instance_id: z.string().min(1),
-  state: z.string(),
-  capabilities: z.array(z.string()),
-  api_origin: z.string(),
-  served_profiles: z.array(z.object({ home: z.string(), profile_id: z.string().min(1) })),
-})
-const reply = z.object({ protocol: z.literal(1), id: z.literal(1), ok: z.boolean(), result: z.unknown().optional(), error: z.string().optional() })
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
 
 export type Owner = { home: string; control: string; profile: string; instance: string; url: string }
 export type Dial = { url: string; protocols: string[] }
@@ -74,7 +67,9 @@ async function control(home: string, verb: string, params?: Record<string, unkno
       if (buffer.length > 524288) return socket.destroy(new Error("oversized gateway control response"))
       if (!buffer.includes("\n")) return
       try {
-        const response = reply.parse(JSON.parse(buffer.split("\n")[0]!))
+        const response: unknown = JSON.parse(buffer.split("\n")[0]!)
+        if (!record(response) || response.protocol !== 1 || response.id !== 1 || typeof response.ok !== "boolean"
+          || response.error !== undefined && typeof response.error !== "string") throw new Error("invalid control reply")
         if (!response.ok) reject(new Error(`gateway control ${verb}: ${response.error ?? "refused"}`))
         else resolve(response.result)
       }
@@ -85,24 +80,30 @@ async function control(home: string, verb: string, params?: Record<string, unkno
 }
 
 function endpoint(raw: unknown, home: string, control: string): Owner {
-  if (!raw || typeof raw !== "object" || !("runtime_protocol" in raw) || raw.runtime_protocol !== 1)
+  if (!record(raw) || raw.runtime_protocol !== 1)
     throw new Error("missing runtime_protocol 1; update Hermes")
   if (!("state" in raw) || raw.state !== "ready") {
     const reason = "drain_reason" in raw && typeof raw.drain_reason === "string" ? `: ${raw.drain_reason}` : ""
     throw new Error(`gateway ${"state" in raw ? raw.state : "invalid_runtime_state"}${reason}`)
   }
   if (!("capabilities" in raw) || !Array.isArray(raw.capabilities) || !raw.capabilities.includes("session-authority-v1")) throw new Error("missing session-authority-v1; update Hermes")
-  const data = identity.parse(raw)
-  const profiles = data.served_profiles.filter(p => canonical(p.home) === home)
+  if (typeof raw.instance_id !== "string" || !raw.instance_id || typeof raw.api_origin !== "string"
+    || !Array.isArray(raw.served_profiles) || raw.capabilities.some(value => typeof value !== "string"))
+    throw new Error("invalid gateway identity")
+  const profiles = raw.served_profiles.map(value => {
+    if (!record(value) || typeof value.home !== "string" || typeof value.profile_id !== "string" || !value.profile_id)
+      throw new Error("invalid gateway served profile")
+    return { home: value.home, profile_id: value.profile_id }
+  }).filter(p => canonical(p.home) === home)
   if (profiles.length !== 1) throw new Error(`gateway profile_mismatch: ${home}`)
-  const url = new URL(data.api_origin)
+  const url = new URL(raw.api_origin)
   const host = url.hostname.replace(/^\[|\]$/g, "")
   if (url.protocol !== "http:" || !url.port || !(host === "::1" || /^127\.(\d{1,3}\.){2}\d{1,3}$/.test(host))
     || url.username || url.password || url.pathname !== "/" || url.search || url.hash)
     throw new Error("invalid gateway loopback api_origin")
   url.protocol = "ws:"
   url.pathname = "/api/ws"
-  return { home, control, profile: profiles[0]!.profile_id, instance: data.instance_id, url: url.toString() }
+  return { home, control, profile: profiles[0]!.profile_id, instance: raw.instance_id, url: url.toString() }
 }
 
 export async function discover(home = profileHome()): Promise<Owner | null> {
@@ -130,17 +131,20 @@ export async function attach(home = profileHome(), ensure = true): Promise<Dial>
       env: { ...env, HERMES_HOME: canonical(home) }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 35_000,
     })
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
-    const verdict = z.object({ state: z.string(), reason_code: z.string().nullish(), detail: z.string().nullish() }).safeParse(
-      (() => { try { return JSON.parse(stdout.trim()) } catch { return null } })(),
-    )
-    if (code !== 0 || !verdict.success || verdict.data.state !== "ready")
-      throw new Error(verdict.success ? `gateway ${verdict.data.state}: ${[verdict.data.reason_code, verdict.data.detail].filter(Boolean).join(": ")}` : `gateway ensure exited ${code}: ${stderr.trim() || stdout.trim()}`)
+    const verdict: unknown = (() => { try { return JSON.parse(stdout.trim()) } catch { return null } })()
+    if (!record(verdict) || typeof verdict.state !== "string"
+      || verdict.reason_code != null && typeof verdict.reason_code !== "string"
+      || verdict.detail != null && typeof verdict.detail !== "string")
+      throw new Error(`gateway ensure exited ${code}: ${stderr.trim() || stdout.trim()}`)
+    if (code !== 0 || verdict.state !== "ready")
+      throw new Error(`gateway ${verdict.state}: ${[verdict.reason_code, verdict.detail].filter(Boolean).join(": ")}`)
     owner = await discover(home)
   }
   if (!owner) throw new Error("gateway owner unavailable")
   privateNode(owner.home, "home")
-  const grant = z.object({ ticket: z.string().regex(/^[A-Za-z0-9_-]+$/), runtime_protocol: z.literal(1), instance_id: z.literal(owner.instance), profile_id: z.literal(owner.profile) })
-    .safeParse(await control(owner.control, "session-ticket", { profile_id: owner.profile, instance_id: owner.instance, purpose: "interactive" }))
-  if (!grant.success) throw new Error("invalid gateway ticket response")
-  return { url: owner.url, protocols: ["hermes-gateway-v1", `hermes-gateway-ticket.${grant.data.ticket}`] }
+  const grant = await control(owner.control, "session-ticket", { profile_id: owner.profile, instance_id: owner.instance, purpose: "interactive" })
+  if (!record(grant) || typeof grant.ticket !== "string" || !/^[A-Za-z0-9_-]+$/.test(grant.ticket)
+    || grant.runtime_protocol !== 1 || grant.instance_id !== owner.instance || grant.profile_id !== owner.profile)
+    throw new Error("invalid gateway ticket response")
+  return { url: owner.url, protocols: ["hermes-gateway-v1", `hermes-gateway-ticket.${grant.ticket}`] }
 }

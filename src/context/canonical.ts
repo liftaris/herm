@@ -1,8 +1,18 @@
-import { z } from "zod"
-
-export const creation = z.object({ sources: z.array(z.string()), parameters: z.array(z.string()) })
-export type Creation = z.infer<typeof creation>
+export type Creation = { sources: string[]; parameters: string[] }
 export type Subscription = { id: string; generation: number }
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function strings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string")
+}
+
+export function creation(value: unknown): Creation {
+  if (!record(value) || !strings(value.sources) || !strings(value.parameters)) throw new Error("invalid runtime.describe session_create")
+  return { sources: value.sources, parameters: value.parameters }
+}
 
 export function prepare(method: string, original: Record<string, unknown>, contract: Creation | null, subscriptions: Map<string, Subscription>) {
   const params = method === "session.create" ? { ...launch(), ...original } : { ...original }
@@ -35,15 +45,21 @@ export function prepare(method: string, original: Record<string, unknown>, contr
 
 export function snapshot(method: string, value: unknown, subscriptions: Map<string, Subscription>): unknown {
   if (method !== "session.create" && method !== "session.resume") return value
-  const parsed = z.object({ session_id: z.string(), subscription_id: z.string(), stored_session_id: z.string().nullish(), execution_generation: z.number().int(), messages: z.array(z.record(z.string(), z.unknown())).optional(), display_messages: z.array(z.record(z.string(), z.unknown())).optional() }).passthrough().parse(value)
-  subscriptions.set(parsed.session_id, { id: parsed.subscription_id, generation: parsed.execution_generation })
-  const messages = parsed.display_messages ?? parsed.messages?.map(row => ({ ...row, text: text(row.content), name: row.tool_name }))
-  return { ...parsed, session_key: parsed.stored_session_id ?? parsed.session_id, messages, info: metadata(parsed.info) }
+  if (!record(value) || typeof value.session_id !== "string" || typeof value.subscription_id !== "string"
+    || typeof value.execution_generation !== "number" || !Number.isInteger(value.execution_generation)
+    || value.stored_session_id != null && typeof value.stored_session_id !== "string"
+    || value.messages !== undefined && (!Array.isArray(value.messages) || !value.messages.every(record))
+    || value.display_messages !== undefined && (!Array.isArray(value.display_messages) || !value.display_messages.every(record)))
+    throw new Error(`invalid ${method} snapshot`)
+  subscriptions.set(value.session_id, { id: value.subscription_id, generation: value.execution_generation })
+  const messages = value.display_messages ?? value.messages?.map(row => ({ ...row, text: text(row.content), name: row.tool_name }))
+  return { ...value, session_key: value.stored_session_id ?? value.session_id, messages, info: metadata(value.info) }
 }
 
 export function metadata(value: unknown) {
-  const info = z.record(z.string(), z.unknown()).nullish().parse(value)
-  return info ? Object.fromEntries(Object.entries(info).filter(([, value]) => value !== null)) : undefined
+  if (value == null) return undefined
+  if (!record(value)) throw new Error("invalid session.info metadata")
+  return Object.fromEntries(Object.entries(value).filter(([, value]) => value !== null))
 }
 
 function text(content: unknown): unknown {
@@ -64,9 +80,9 @@ function launch(): Record<string, unknown> {
   if (env.HERMES_TUI_TOOLSETS) options.toolsets = env.HERMES_TUI_TOOLSETS.split(",")
   if (env.HERMES_TUI_SKILLS) options.skills = [...new Set(env.HERMES_TUI_SKILLS.split(/[,\n]/).map(name => name.trim()).filter(Boolean))]
   if (env.HERMES_TUI_CLIENT_ENV) {
-    const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(env.HERMES_TUI_CLIENT_ENV))
-    if (!parsed.success) throw new Error("invalid HERMES_TUI_CLIENT_ENV")
-    options.client_env = parsed.data
+    const parsed: unknown = JSON.parse(env.HERMES_TUI_CLIENT_ENV)
+    if (!record(parsed) || Object.values(parsed).some(value => typeof value !== "string")) throw new Error("invalid HERMES_TUI_CLIENT_ENV")
+    options.client_env = parsed
   }
   if (env.HERMES_TUI_MAX_TURNS) {
     const turns = Number(env.HERMES_TUI_MAX_TURNS)

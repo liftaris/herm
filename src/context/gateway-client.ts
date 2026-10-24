@@ -370,7 +370,7 @@ export class GatewayClient extends EventEmitter {
 
   private describe() {
     const generation = this.generation
-    return this.description ??= this.request("runtime.describe").then(value => canonical.creation.parse(rec(value)?.session_create)).catch(err => {
+    return this.description ??= this.request("runtime.describe").then(value => canonical.creation(rec(value)?.session_create)).catch(err => {
       if (generation === this.generation) this.description = null
       throw err
     })
