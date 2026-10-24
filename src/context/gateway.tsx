@@ -11,6 +11,7 @@ import type { GatewayEvent } from "../context/wire"
 /** Minimal surface consumers depend on. GatewayClient satisfies this. */
 export interface Gateway extends EventEmitter {
   request<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>
+  answer(id: string, result: Record<string, unknown>): Promise<void>
   setSession(sid: string): void
   start(): void
   drain(): void

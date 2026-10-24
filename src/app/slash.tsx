@@ -586,9 +586,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
     }
     if (c.target !== "gateway") return
     if (!x.capabilities.canDispatchGatewayCommand) {
-      const msg = x.capabilities.contractMessage
-      if (!msg) return
-      const text = `${msg} Blocked slash.exec.`
+      const text = "No connected session"
       x.dispatch({ kind: "system", text: `error: ${text}` })
       toast.show({ variant: "error", message: text })
       return

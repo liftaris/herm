@@ -24,6 +24,7 @@ import { PluginProvider } from "../src/plugins/runtime"
 import { BackgroundProvider } from "../src/app/background"
 import type { HermPlugin } from "../src/plugins/types"
 import type { GatewayEvent } from "../src/context/wire"
+import type { ServerRequest } from "../src/context/server-requests"
 
 type Handler = (params: Record<string, unknown>) => unknown | Promise<unknown>
 type Mode = "compat" | "audit" | "strict"
@@ -57,11 +58,8 @@ const preset: Record<string, Handler> = {
   "session.save": () => ({ file: "/tmp/conv.json" }),
   "session.usage": () => ({}),
   "prompt.submit": () => ({ accepted: true }),
-  "approval.respond": () => ({ accepted: true }),
-  "clarify.respond": () => ({ accepted: true }),
-  "secret.respond": () => ({ accepted: true }),
-  "sudo.respond": () => ({ accepted: true }),
-  "terminal.read.respond": () => ({ accepted: true }),
+  "answer": () => ({}),
+  "approval.received": () => ({ acknowledged: true }),
   "cron.manage": () => ({ jobs: [] }),
   "toolsets.list": () => ({ toolsets: [] }),
   "tools.configure": () => ({ changed: [], enabled_toolsets: [], unknown: [] }),
@@ -147,6 +145,10 @@ export class MockGateway extends EventEmitter implements Gateway {
     if (this.mode === "strict") throw err
     return {} as T
   }
+
+  async answer(id: string, result: Record<string, unknown>) { await this.request("answer", { id, ...result }) }
+
+  ask(frame: ServerRequest) { this.emit("request", frame) }
 
   /** Push an event; buffers until drained, then emits live. */
   push(ev: GatewayEvent) {

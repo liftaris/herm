@@ -42,6 +42,7 @@ export type Action =
   | { kind: "subagent"; event: "start" | "thinking" | "tool" | "progress" | "complete"; payload: SubagentPayload }
   | { kind: "prompt"; id: string; req: PromptReq }
   | { kind: "prompt.answered"; id: string; label: string; ok: boolean }
+  | { kind: "prompt.cancel"; id: string }
   | { kind: "error"; text: string; fatal?: boolean }
   | { kind: "interrupt.notice"; text: string }
 
@@ -185,6 +186,7 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
       return { ...state, messages: renderSubagent(state.messages, a.event, a.payload) }
 
     case "prompt": {
+      if (state.messages.some(m => m.parts.some(p => p.type === "prompt" && p.id === a.id))) return state
       const part: PromptPart = {
         type: "prompt", id: a.id, variant: a.req.variant, req: a.req,
       }
@@ -196,6 +198,9 @@ export function turnReducer(state: TurnState, a: Action): TurnState {
         messages: appendPart(state.messages, part, true),
       }
     }
+
+    case "prompt.cancel":
+      return { ...state, messages: state.messages.map(m => ({ ...m, parts: m.parts.filter(p => p.type !== "prompt" || p.id !== a.id || p.answered) })) }
 
     case "prompt.answered":
       return {
@@ -359,24 +364,11 @@ function finalize(messages: Message[], final?: string, usage?: Usage, previewed?
       : final && !dup && !(previewed && sameText(joinText(last.parts), final))
         ? [...last.parts, { type: "text" as const, content: final, streaming: false }]
         : seal(last.parts)
-    return expirePrompts([...messages.slice(0, -1), { ...last, parts, usage }])
+    return [...messages.slice(0, -1), { ...last, parts, usage }]
   }
-  const next = final
+  return final
     ? [...messages, { ...assistant([{ type: "text", content: final, streaming: false }]), usage }]
     : messages
-  return expirePrompts(next)
-}
-
-function expirePrompts(messages: Message[]): Message[] {
-  const at = Date.now()
-  return messages.map(m => m.role === "assistant"
-    ? {
-      ...m,
-      parts: m.parts.map(p => p.type === "prompt" && !p.answered
-        ? { ...p, answered: { label: "Timed out", ok: false, at, question: promptQuestion(p.req) } }
-        : p),
-    }
-    : m)
 }
 
 function joinText(parts: Part[]): string {
@@ -424,11 +416,10 @@ function updatePrompt(messages: Message[], id: string, fn: (p: PromptPart) => Pr
 }
 
 function promptQuestion(req: PromptReq): string | undefined {
-  if (req.variant === "clarify") return req.question
+  if (req.variant === "clarify") return req.questions.map(q => q.question).join("; ")
   if (req.variant === "approval") return req.description || "Shell command"
   if (req.variant === "sudo") return "Sudo required"
-  if (req.variant === "secret") return req.env_var ? `Secret: ${req.env_var}` : "Secret required"
-  return "Terminal read required"
+  return req.env_var ? `Secret: ${req.env_var}` : "Secret required"
 }
 
 function upsertThinking(messages: Message[], text: string, final: boolean, verbose?: boolean): Message[] {

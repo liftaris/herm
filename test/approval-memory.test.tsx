@@ -10,6 +10,7 @@ type ApprovalReq = Extract<PromptReq, { variant: "approval" }>
 
 const req = (over: Partial<ApprovalReq> = {}): ApprovalReq => ({
   variant: "approval",
+  id: "approval-test", session_id: "test-sid", request_id: "approval-1",
   command: "rm -rf /tmp/a",
   description: "Run dangerous command?",
   ...over,
@@ -43,12 +44,12 @@ describe("approval memory", () => {
 
     expect(t.frame()).toContain("Permission required")
     expect(t.frame()).toContain("$ rm -rf /tmp/a")
-    expect(gw.calls.filter(c => c.method === "approval.respond").length).toBe(0)
+    expect(gw.calls.filter(c => c.method === "answer").length).toBe(0)
 
     act(() => ref.current!.feed({ name: "1" } as never))
     await t.settle()
 
-    expect(gw.last("approval.respond")?.params.choice).toBe("once")
+    expect(gw.last("answer")?.params.choice).toBe("once")
     expect(prefsAny.get("neverPrompts")).toEqual([])
   })
 
@@ -63,7 +64,7 @@ describe("approval memory", () => {
     act(() => ref.current!.feed({ name: "3" } as never))
     await t.settle()
 
-    expect(gw.last("approval.respond")?.params.choice).toBe("always")
+    expect(gw.last("answer")?.params.choice).toBe("always")
     expect(prefsAny.get("neverPrompts")).toEqual([
       { group: "approval", question: "Run dangerous command?", subject: "rm_recursive|tmp_write" },
     ])
@@ -72,22 +73,16 @@ describe("approval memory", () => {
   test("reuses memory for the same question and pattern_keys-derived subject", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-1", method: "approval", params: { session_id: "test-sid", request_id: "approval-1", command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
     await t.settle()
     act(() => t.keys.pressKey("3"))
     await t.settle()
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/b", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-2", method: "approval", params: { session_id: "test-sid", request_id: "approval-2", command: "rm -rf /tmp/b", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
     await t.settle()
 
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(2)
-    expect(t.gw.last("approval.respond")?.params.choice).toBe("always")
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(2)
+    expect(t.gw.last("answer")?.params.choice).toBe("always")
     expect(t.frame()).not.toContain("$ rm -rf /tmp/b")
     t.destroy()
   })
@@ -97,14 +92,11 @@ describe("approval memory", () => {
       { group: "approval", question: "Run dangerous command?", subject: "rm_recursive|tmp_write" },
     ])
     const gw = new MockGateway({
-      "approval.respond": () => { throw new Error("approval wire down") },
+      "answer": () => { throw new Error("approval wire down") },
     })
     const t = await mount({ gw })
     await until(t, () => t.frame().includes("Ready"))
-    act(() => gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/retry", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
+    act(() => gw.ask({ id: "srq-3", method: "approval", params: { session_id: "test-sid", request_id: "approval-3", command: "rm -rf /tmp/retry", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
 
     await until(t, () => t.frame().includes("approval wire down") && t.frame().includes("$ rm -rf /tmp/retry"))
     t.destroy()
@@ -118,16 +110,13 @@ describe("approval memory", () => {
     let creates = 0
     const pending = new Promise<never>((_resolve, reject) => { fail = reject })
     const gw = new MockGateway({
-      "approval.respond": () => pending,
+      "answer": () => pending,
       "session.create": () => ({ session_id: `sid-${++creates}` }),
     })
     const t = await mount({ gw })
     await until(t, () => t.frame().includes("Ready"))
-    act(() => gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/stale", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
-    await until(t, () => gw.last("approval.respond") !== undefined)
+    act(() => gw.ask({ id: "srq-4", method: "approval", params: { session_id: "sid-1", request_id: "approval-4", command: "rm -rf /tmp/stale", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
+    await until(t, () => gw.last("answer") !== undefined)
 
     await act(async () => { await t.keys.typeText("/new now") })
     act(() => t.keys.pressEnter())
@@ -146,59 +135,41 @@ describe("approval memory", () => {
   test("does not reuse memory for a different question or different subject", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-5", method: "approval", params: { session_id: "test-sid", request_id: "approval-5", command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
     await t.settle()
     act(() => t.keys.pressKey("3"))
     await t.settle()
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/b", description: "Run package manager?", pattern_keys: ["rm_recursive", "tmp_write"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-6", method: "approval", params: { session_id: "test-sid", request_id: "approval-6", command: "rm -rf /tmp/b", description: "Run package manager?", pattern_keys: ["rm_recursive", "tmp_write"] } }))
     await t.settle()
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(1)
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(1)
     expect(t.frame()).toContain("Run package manager?")
     act(() => t.keys.pressEscape())
     await t.settle()
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "cat /tmp/a", description: "Run dangerous command?", pattern_keys: ["tmp_read"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-7", method: "approval", params: { session_id: "test-sid", request_id: "approval-7", command: "cat /tmp/a", description: "Run dangerous command?", pattern_keys: ["tmp_read"] } }))
     await t.settle()
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(2)
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(2)
     expect(t.frame()).toContain("$ cat /tmp/a")
     t.destroy()
   })
 
-  test("falls back to command as subject when approval.request.pattern_keys is missing", async () => {
+  test("falls back to command as subject when approval server request.pattern_keys is missing", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "bun add zod", description: "Run package manager?" },
-    }))
+    act(() => t.gw.ask({ id: "srq-8", method: "approval", params: { session_id: "test-sid", request_id: "approval-8", command: "bun add zod", description: "Run package manager?" } }))
     await t.settle()
     expect(t.frame()).toContain("subject: bun add zod")
     act(() => t.keys.pressKey("3"))
     await t.settle()
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "bun add zod", description: "Run package manager?" },
-    }))
+    act(() => t.gw.ask({ id: "srq-9", method: "approval", params: { session_id: "test-sid", request_id: "approval-9", command: "bun add zod", description: "Run package manager?" } }))
     await t.settle()
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(2)
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(2)
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "bun update zod", description: "Run package manager?" },
-    }))
+    act(() => t.gw.ask({ id: "srq-10", method: "approval", params: { session_id: "test-sid", request_id: "approval-10", command: "bun update zod", description: "Run package manager?" } }))
     await t.settle()
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(2)
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(2)
     expect(t.frame()).toContain("$ bun update zod")
     t.destroy()
   })
@@ -210,13 +181,10 @@ describe("approval memory", () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
 
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive"] },
-    }))
+    act(() => t.gw.ask({ id: "srq-11", method: "approval", params: { session_id: "test-sid", request_id: "approval-11", command: "rm -rf /tmp/a", description: "Run dangerous command?", pattern_keys: ["rm_recursive"] } }))
     await t.settle()
 
-    expect(t.gw.calls.filter(c => c.method === "approval.respond").length).toBe(0)
+    expect(t.gw.calls.filter(c => c.method === "answer").length).toBe(0)
     expect(t.frame()).toContain("Permission required")
     t.destroy()
   })
