@@ -6,9 +6,6 @@
 // screen (?1049l) so it lands on the primary scrollback the user
 // actually returns to. terminal-reset's `exit` hook then flushes the
 // mode-reset blob synchronously on process.exit().
-//
-// Parity: opencode context/exit.tsx — minus onBeforeExit/onExit (no
-// plugin runtime) and the win32 input-buffer flush (tracked as a bead).
 
 import { writeSync } from "node:fs"
 

@@ -155,7 +155,7 @@ unknown dynamic producer behavior.
 ## Drift decisions
 
 Intentional drift is a declared Herm boundary. Examples include transient status
-or thinking events that should not become transcript rows, OpenCode config layers
+or thinking events that should not become transcript rows, external config layers
 Herm does not claim to import, or theme compatibility fields retained until a
 deliberate migration. The declaration belongs in docs or tests beside the
 surface.
@@ -166,7 +166,7 @@ modes are blocked, not missing support. The failure message and test are the
 contract.
 
 Unsupported drift is skipped or dropped behavior with a documented analogue gap.
-OpenCode key IDs without a Herm action and strict unknown RPCs in tests are
+Unrecognized gateway events and strict unknown RPCs in tests are
 unsupported until a feature ticket changes the contract.
 
 Requires Herm feature ticket means upstream exposed operator-relevant behavior

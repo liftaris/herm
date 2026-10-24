@@ -1,5 +1,4 @@
 {
-  "$schema": "https://opencode.ai/theme.json",
   "defs": {
     "defaultBgDark": "#1a1a2e",
     "defaultPanelDark": "#202038",

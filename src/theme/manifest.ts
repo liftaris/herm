@@ -38,7 +38,6 @@ export const PREVIEW: Record<string, ThemePreview> = {
   "nightowl": { primary: "#82AAFF", accent: "#c792ea", background: "#011627" },
   "nord": { primary: "#88C0D0", accent: "#8FBCBB", background: "#2E3440" },
   "one-dark": { primary: "#61afef", accent: "#56b6c2", background: "#282c34" },
-  "opencode": { primary: "#fab283", accent: "#9d7cd8", background: "#0a0a0a" },
   "orng": { primary: "#EC5B2B", accent: "#FFF7F1", background: "#0a0a0a" },
   "osaka-jade": { primary: "#2DD5B7", accent: "#549e6a", background: "#111c18" },
   "palenight": { primary: "#82aaff", accent: "#89ddff", background: "#292d3e" },

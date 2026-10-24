@@ -1,8 +1,3 @@
-// MEDIA: directive rendering — `MEDIA:/path` lines in assistant output
-// become clickable chips instead of literal text. Neither reference
-// (Ink nor opencode) renders pixels; both surface an openable link.
-// OpenTUI has no image primitive, so this is the ceiling for now.
-
 import { memo, useState } from "react"
 import { TextAttributes, type MouseEvent } from "@opentui/core"
 import { openFile } from "../../utils/open-file"

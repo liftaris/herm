@@ -6,7 +6,7 @@ Keep the current theme contract working. Existing JSON themes, `ThemeCurrent` fi
 
 ## Identity
 
-Herm themes should preserve the app's own visual language: monochrome liminal space, Greek herm/pillar motifs, and retro-CGI grid restraint. Accents can vary by theme, but the UI should still read as Herm. Do not justify a color choice by matching Codex, Gemini, OpenCode, or any other product.
+Herm themes should preserve the app's own visual language: monochrome liminal space, Greek herm/pillar motifs, and retro-CGI grid restraint. Accents can vary by theme, but the UI should still read as Herm. Do not justify a color choice by matching another product.
 
 ## Role categories
 

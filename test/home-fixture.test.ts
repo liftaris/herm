@@ -15,7 +15,7 @@ describe("tmpHome fixture", () => {
       await using h = await tmpHome({
         config: { memory: { provider: "mem0" } },
         files: { "memories/MEMORY.md": "one" },
-        prefs: { theme: "opencode", lastSessionId: "sid-a" },
+        prefs: { theme: "tokyonight", lastSessionId: "sid-a" },
       })
       dir = h.path
 
@@ -23,7 +23,7 @@ describe("tmpHome fixture", () => {
       expect(process.env.HERM_CONFIG_DIR).toBe(h.cfg)
       expect(hermesPath("memories/MEMORY.md")).toBe(`${h.path}/memories/MEMORY.md`)
       expect(await Bun.file(hermesPath("memories/MEMORY.md")).text()).toBe("one")
-      expect(prefs.get("theme")).toBe("opencode")
+      expect(prefs.get("theme")).toBe("tokyonight")
       expect(prefs.get("lastSessionId")).toBe("sid-a")
 
       h.write("sessions/sessions.json", JSON.stringify({ a: { session_id: "sid-a" } }))
