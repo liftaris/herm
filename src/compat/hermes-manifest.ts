@@ -1513,8 +1513,27 @@ export const HERMES_MANIFEST = {
           "wake.status",
           "wake.stop"
         ],
-        "removals": [],
-        "likelyRenames": []
+        "removals": [
+          "gateway.ping",
+          "runtime.describe"
+        ],
+        "likelyRenames": [
+          {
+            "from": "gateway.ping",
+            "to": "gateway.capabilities",
+            "score": 0.5
+          },
+          {
+            "from": "gateway.ping",
+            "to": "ping",
+            "score": 0.5
+          },
+          {
+            "from": "runtime.describe",
+            "to": "profiles.describe",
+            "score": 0.5
+          }
+        ]
       }
     },
     "events": {

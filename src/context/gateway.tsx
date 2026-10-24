@@ -1,7 +1,3 @@
-// GatewayClient exposed via React context. The provider accepts an
-// injected client so tests can substitute a MockGateway without
-// spawning the Python tui_gateway subprocess.
-
 import { createContext, useContext, useEffect, useRef, useState, useMemo, useCallback } from "react"
 import type { ReactNode } from "react"
 import { EventEmitter } from "events"
@@ -23,9 +19,8 @@ export interface Gateway extends EventEmitter {
 
 type Ctx = {
   client: Gateway
-  ready: boolean
-  /** Kill and respawn the gateway subprocess. Reads process.env fresh —
-   *  call after rehome() so the new process sees the new HERMES_HOME. */
+  state: "connecting" | "ready" | "disconnected"
+  /** Re-discover the current profile owner and mint a new ticket. */
   restart: (mode?: "resume" | "new") => void
 }
 
@@ -34,25 +29,14 @@ const Gw = createContext<Ctx | null>(null)
 export const GatewayProvider = ({ client, children }: { client?: Gateway; children: ReactNode }) => {
   const ref = useRef<Gateway | null>(null)
   if (!ref.current) ref.current = client ?? new GatewayClient()
-  const [ready, setReady] = useState(ref.current.ready)
-  const retry = useRef<{ timer?: ReturnType<typeof setTimeout>; attempts: number }>({ attempts: 0 })
+  const [state, setState] = useState<Ctx["state"]>(ref.current.ready ? "ready" : "connecting")
 
   useEffect(() => {
     const c = ref.current!
     const onEvent = (ev: GatewayEvent) => {
-      if (ev.type === "gateway.ready" || ev.type === "session.info") setReady(true)
-      if (ev.type === "session.info") {
-        if (retry.current.timer) clearTimeout(retry.current.timer)
-        retry.current = { attempts: 0 }
-      }
+      if (ev.type === "gateway.ready" || ev.type === "session.info") setState("ready")
     }
-    const onExit = () => {
-      setReady(false)
-      if (retry.current.timer) clearTimeout(retry.current.timer)
-      if (retry.current.attempts >= 3) return
-      const delay = 250 * (2 ** retry.current.attempts++)
-      retry.current.timer = setTimeout(() => c.start(), delay)
-    }
+    const onExit = () => setState("disconnected")
     c.on("event", onEvent)
     c.on("exit", onExit)
     let dead = false
@@ -62,21 +46,18 @@ export const GatewayProvider = ({ client, children }: { client?: Gateway; childr
       dead = true
       c.off("event", onEvent)
       c.off("exit", onExit)
-      if (retry.current.timer) clearTimeout(retry.current.timer)
       c.removeAllListeners()
       c.kill()
     }
   }, [])
 
   const restart = useCallback((mode: "resume" | "new" = "resume") => {
-    if (retry.current.timer) clearTimeout(retry.current.timer)
-    retry.current = { attempts: 0 }
-    setReady(false)
+    setState("connecting")
     ref.current!.emit("restart", mode)
     ref.current!.start()
   }, [])
 
-  const value = useMemo<Ctx>(() => ({ client: ref.current!, ready, restart }), [ready, restart])
+  const value = useMemo<Ctx>(() => ({ client: ref.current!, state, restart }), [state, restart])
   return <Gw.Provider value={value}>{children}</Gw.Provider>
 }
 
@@ -109,12 +90,18 @@ export function useGatewayEvent(handler: (ev: GatewayEvent) => void): void {
 export function useGatewayReady(): boolean {
   const ctx = useContext(Gw)
   if (!ctx) throw new Error("useGatewayReady() must be inside <GatewayProvider>")
-  return ctx.ready
+  return ctx.state === "ready"
 }
 
-/** Kill + respawn the gateway subprocess under the current process.env. */
+/** Reconnect under the current profile home. */
 export function useGatewayRestart(): (mode?: "resume" | "new") => void {
   const ctx = useContext(Gw)
   if (!ctx) throw new Error("useGatewayRestart() must be inside <GatewayProvider>")
   return ctx.restart
+}
+
+export function useGatewayState() {
+  const ctx = useContext(Gw)
+  if (!ctx) throw new Error("useGatewayState() must be inside <GatewayProvider>")
+  return ctx.state
 }

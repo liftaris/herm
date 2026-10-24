@@ -3,6 +3,7 @@
 import { useMemo, useCallback } from "react"
 import * as preferences from "../context/preferences"
 import { sdb } from "../service/sessions-db"
+import { gatewayUrl } from "../context/gateway-client"
 import { useGateway } from "../context/gateway"
 import { transcriptToMessages } from "./turnReducer"
 import { parts, type ServerRequest } from "../context/server-requests"
@@ -60,7 +61,7 @@ type SessionOps = {
   create: () => Promise<{ id: string; key: string; info?: SessionInfo }>
   resume: (sid: string) => Promise<Resumed>
   activate: (sid: string) => Promise<Activated>
-  /** Finalize a gateway session (best-effort — swallows errors). */
+  /** Detach from the owner without ending its work. */
   close: (sid: string, opts?: Close) => Promise<boolean>
   interrupt: () => Promise<void>
   branch: (name?: string) => Promise<string | null>
@@ -128,16 +129,6 @@ export function useSession(): SessionOps {
     }
   }, [gw])
 
-  // Finalize a gateway session: marks the DB row ended, tears down the
-  // per-session slash_worker subprocess, unregisters the approval
-  // notifier, and drops the AIAgent from the gateway's `_sessions` map.
-  // Without this, /new and session-switch leak one HermesCLI child
-  // (slash_worker) + one live AIAgent per hop until quit, and the row's
-  // `ended_at IS NULL` throws off lineage classification in Sessions
-  // tab (sessions-db.ts SUB/CONT predicates). Parity with Ink TUI's
-  // useSessionLifecycle.closeSession. Pass `session_id` explicitly so
-  // auto-injection doesn't close whatever sid the gateway already
-  // switched to.
   const busy = useCallback(async () => {
     try {
       const res = await gw.request<Agents>("agents.list")
@@ -147,12 +138,7 @@ export function useSession(): SessionOps {
 
   const close = useCallback(async (sid: string, opts?: Close) => {
     if (!sid) return false
-    // Hermes Agent's session.close tears down the AIAgent, which also kills
-    // terminal(background=true) processes owned by that agent. The gateway
-    // only exposes a global agents.list summary today, not owner session keys,
-    // so preserve the outgoing live session while any durable process is
-    // running rather than risking SIGTERM on a watcher during session switch.
-    if (opts?.preserveBackground && await busy()) return false
+    if (gatewayUrl() && opts?.preserveBackground && await busy()) return false
     try {
       await gw.request("session.close", { session_id: sid })
       return true
