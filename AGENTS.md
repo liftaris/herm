@@ -70,7 +70,6 @@ block does" narration or task/migration history.
 - Keep things in one function unless composable or reusable
 - Avoid `try`/`catch` where possible
 - Avoid using the `any` type
-- Prefer single word variable names where possible
 - Use Bun APIs when possible, like `Bun.file()`, `bun:sqlite`, `Bun.Glob`
 - Bun auto-loads `.env` — don't use dotenv
 - Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
@@ -78,28 +77,7 @@ block does" narration or task/migration history.
 
 ### Naming
 
-Prefer single word names for variables and functions. Only use multiple words if necessary.
-
-### Naming Enforcement (Read This)
-
-THIS RULE IS MANDATORY FOR AGENT WRITTEN CODE.
-
-- Use single word names by default for new locals, params, and helper functions.
-- Multi-word names are allowed only when a single word would be unclear or ambiguous.
-- Do not introduce new camelCase compounds when a short single-word alternative is clear.
-- Before finishing edits, review touched lines and shorten newly introduced identifiers where possible.
-- Good short names to prefer: `pid`, `cfg`, `err`, `opts`, `dir`, `root`, `child`, `state`, `timeout`.
-- Examples to avoid unless truly required: `inputPID`, `existingClient`, `connectTimeout`, `workerPath`.
-
-```ts
-// Good
-const foo = 1;
-function journal(dir: string) {}
-
-// Bad
-const fooBar = 1;
-function prepareJournal(dir: string) {}
-```
+Names are short and clear. Prefer a single word when it is unambiguous in its scope (`pid`, `cfg`, `err`, `dir`, `state`). Use a compound when a single word would be vague.
 
 Reduce total variable count by inlining when a value is only used once.
 
