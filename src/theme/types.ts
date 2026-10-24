@@ -1,8 +1,3 @@
-/**
- * Theme type definitions — mirrors OpenCode's token model exactly.
- * All 44 RGBA color tokens + 1 numeric token.
- */
-
 import type { RGBA } from "@opentui/core";
 
 /** All color token names (excludes thinkingOpacity) */
@@ -100,7 +95,6 @@ export type ColorValue = HexColor | RefName | Variant | RGBA;
 
 /** Theme JSON file format */
 export type ThemeJson = {
-  $schema?: string;
   defs?: Record<string, HexColor | RefName>;
   theme: Omit<
     Record<ThemeColor, ColorValue>,

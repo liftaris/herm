@@ -19,7 +19,7 @@ const writeTheme = (name: string, menu?: string) => {
   const json = menu
     ? { ...base, theme: { ...base.theme, backgroundMenu: menu } }
     : base
-  writeFileSync(join(dir, `${name}.json`), JSON.stringify(json, null, 2))
+  writeFileSync(join(dir, `${name}.json`), JSON.stringify({ ...json, $schema: "https://example.com/theme.json" }, null, 2))
 }
 
 const clear = () => rmSync(join(configDir(), "themes"), { recursive: true, force: true })
@@ -99,7 +99,7 @@ describe("user themes", () => {
     t.destroy()
   })
 
-  test("top tab bar paints the theme menu rail", async () => {
+  test("top tab bar paints a user theme menu rail with schema metadata", async () => {
     writeTheme("menu-rail", "#123456")
     prefs.set("theme", "menu-rail")
     prefs.set("themeMode", "dark")

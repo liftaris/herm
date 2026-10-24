@@ -71,7 +71,7 @@ import { tmpHome } from "./fixture/home"
 await using h = await tmpHome({
   config: { memory: { provider: "mem0" } },
   files: { "memories/MEMORY.md": "one" },
-  prefs: { theme: "opencode" },
+  prefs: { theme: "tokyonight" },
 })
 ```
 
@@ -147,7 +147,7 @@ settles first then polls, and times out with a frame dump on failure.
 
 ## CI gates
 
-CI and release use Bun `1.3.13`. The required pull-request gate runs the
+CI and release use Bun `1.4.4`. The required pull-request gate runs the
 high-confidence checker, full typecheck, normal full suite, and production
 build in one job. Do not weaken these commands with source-only filtering.
 

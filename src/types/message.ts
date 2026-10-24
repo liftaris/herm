@@ -1,5 +1,3 @@
-// Message types for herm chat — parts-based like OpenCode
-
 export type TextPart = {
   type: "text"
   key?: string

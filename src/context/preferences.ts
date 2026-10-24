@@ -1,17 +1,3 @@
-/**
- * Local TUI preferences — persisted to $HERM_CONFIG_DIR/tui.json
- * (defaults to ~/.hermes/herm/tui.json; see utils/paths.ts).
- *
- * Compatible with OpenCode's tui.json schema pattern:
- *   - JSON file in XDG config dir
- *   - Optional fields with sensible defaults
- *   - Deep-merged from multiple sources (global → project)
- *   - Read once at startup, written on change
- *
- * Herm-specific extensions (beyond OpenCode compat):
- *   - lastSessionId: resume previous session on startup
- */
-
 import { join } from "path"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { useSyncExternalStore } from "react"
