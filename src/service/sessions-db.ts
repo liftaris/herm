@@ -476,10 +476,6 @@ export function peek(sid: string, _n = 4): PeekMsg[] {
   } finally { end() }
 }
 
-/** Most-recent session with a "real" system prompt (long enough to
- *  carry SOUL/memory/skills, not the ~700-char generic fallback).
- *  Worker-side half of home's `systemPrompt` slice — token counting
- *  happens on the main thread so the worker never loads gpt-tokenizer. */
 export const systemPrompt = (): { id: string; text: string } | null =>
   (q(`SELECT id, system_prompt AS text FROM sessions
       WHERE system_prompt IS NOT NULL AND length(system_prompt) > 1000
