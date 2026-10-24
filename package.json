@@ -39,6 +39,7 @@
     "current-hermes-canary": "bun scripts/current-hermes-canary.ts",
     "build": "bun scripts/build.ts",
     "bench": "bun scripts/bench-frame.tsx",
+    "bench:load": "bun scripts/bench-load.ts",
     "start": "bun run dist/index.js",
     "test": "bun test",
     "test:check": "bun scripts/check-tests.ts",
