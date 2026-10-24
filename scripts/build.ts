@@ -19,6 +19,9 @@
 import { $ } from "bun"
 import { rmSync, chmodSync } from "node:fs"
 import pkg from "../package.json" with { type: "json" }
+import { defaultFrames } from "../src/components/avatar/states"
+
+for (const state of ["idle", "listening", "thinking", "speaking", "working", "error"] as const) defaultFrames(state)
 
 rmSync("dist", { recursive: true, force: true })
 

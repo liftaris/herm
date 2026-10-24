@@ -96,20 +96,56 @@ unknown dynamic producer behavior.
 5. Unknown producer event families require a feature ticket or an explicit
    unsupported classification; do not drop them silently.
 
-### Contract version
+## Owner connection
 
-1. Check `session.info.desktop_contract` against `MIN_BACKEND_CONTRACT` and
-   `MAX_BACKEND_CONTRACT`. Missing, malformed, older, and newer contracts fail
-   closed for mutating RPCs while boot and reviewed read methods remain usable.
-2. Preserve source revision, version, release date, and update metadata from the
-   same payload so failures identify the producer that emitted them.
-3. Treat generated artifact headers as additional contract sources: Hermes
-   Agent revision, config key count, RPC method count, and event count.
-4. `_config_version` and other internal `_` keys are intentionally not surfaced
-   in the Herm config schema.
-5. A changed source revision, key count, approval mode set, RPC method count,
-   event count, or no-internal-keys assertion is contract drift. Review it
-   before committing regenerated output.
+By default, Herm discovers the current profile's running Hermes gateway through
+its private control socket. A named profile may share the default profile's owner.
+Herm checks `runtime_protocol: 1` and `session-authority-v1`, mints a single-use
+interactive ticket for that profile, and requires the `hermes-gateway-v1`
+WebSocket subprotocol echo. A missing protocol or capability reports an error
+that suggests updating Hermes. Herm does not check a numeric desktop contract.
+
+Only when no owner is present does Herm run
+`hermes gateway ensure --json --timeout 30`. `HERM_HERMES_BIN` overrides the
+executable. Ensure failures preserve the reported state, reason, and detail.
+Herm never stops, restarts, or reconfigures an owner it discovers. An owner that
+answers with a non-ready state is reported as such; Herm does not wait for it or
+run ensure against it.
+
+`--gateway-url URL`, `HERM_GATEWAY_URL`, and `HERMES_TUI_GATEWAY_URL` select an
+explicit remote dashboard WebSocket instead. This mode does not use local
+control discovery or native ticket authentication.
+
+The native chat loop reads `runtime.describe`, creates with `source: "tui"` and
+a fresh `request_id`, resumes with `display_projection: true`, and submits with
+a fresh `input_id`. Create carries the launch directory and explicit Hermes launch settings only
+through advertised creation parameters. Launch-only settings do not enter the
+owner's startup environment. Create and resume retain the returned subscription
+and execution generation. Interrupt targets that generation. Leaving a view sends
+`session.detach` without `end_reason`; the owner keeps the conversation and its
+work. Herm no longer launches a stdio gateway.
+
+Herm pings every 15 seconds and disconnects after 45 seconds without an inbound
+frame. An unexpected close fails pending calls with its reason and does not
+redial automatically. Open the command palette and select **Reconnect to Hermes**
+to rediscover the current owner and mint a fresh ticket.
+
+The read-only smoke command `bun scripts/owner-attach-smoke.ts` checks the default
+profile. Add `--profile NAME` for a named profile. It describes the runtime,
+lists up to five live conversations, pings, and closes without creating a
+conversation or submitting a prompt. It never prints a ticket.
+
+Canonical control parity remains separate work. Calls such as `session.title`,
+`session.usage`, `session.undo`, `session.branch`, `session.compress`,
+`session.delete`, and `agents.list` can still be refused by the owner. Their raw
+errors remain visible in diagnostics.
+
+### Generated contract evidence
+
+Generated artifact headers identify the pinned Hermes revision, config keys,
+RPC methods, and events. `_config_version` and other internal `_` keys are not
+part of the Herm config schema. Review source revision, count, and capability
+changes before committing regenerated artifacts.
 
 ### Capability classifications
 

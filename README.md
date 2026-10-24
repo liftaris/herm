@@ -56,8 +56,11 @@ herm       # fresh session
 herm -c    # resume last session
 ```
 
-Attach to an already-running Hermes dashboard instead of spawning a local
-gateway subprocess:
+Herm attaches to the current profile's running Hermes gateway by default. If no
+owner is running, it uses `hermes gateway ensure` to start one. It never stops or
+restarts an existing owner. Closing Herm detaches the view without ending its work.
+
+Use an explicit remote dashboard instead:
 
 ```bash
 herm --gateway-url 'ws://127.0.0.1:9119/api/ws?token=...'
