@@ -1505,7 +1505,7 @@ describe("app", () => {
     expect(f).not.toContain("zz_stale_tool")   // tool part never created
     expect(f).toContain("alpha")
     // `*[interrupted]*` → markdown strips `*` and `[]`.
-    expect(f).toMatch(/^\s+interrupted\s*$/m)
+    expect(f).toMatch(/^[ \t]*interrupted(?:[ \t]{2,}|$)/m)
 
     // Latch survives completion: the worker thread's stream-retry except
     // handler emits lifecycle "Reconnecting…" after message.complete; a
