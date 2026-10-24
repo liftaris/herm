@@ -2,6 +2,8 @@ import { describe, test, expect, mock } from "bun:test"
 import { mountNode, until } from "./harness"
 import { AnimatedAvatar } from "../src/components/avatar/AnimatedAvatar"
 import type { ParsedEikon } from "../src/components/avatar/eikon"
+import { defaultFrames } from "../src/components/avatar/states"
+import * as prefs from "../src/context/preferences"
 
 type TestGlobal = typeof globalThis & { __hermAvatarRenders?: number }
 
@@ -15,6 +17,16 @@ const eikon = (frames: string[][], loopFrom = 0): ParsedEikon => {
 }
 
 describe("AnimatedAvatar", () => {
+  test("default clips render their complete grid, including states absent from a user eikon", async () => {
+    prefs.set("animations", false)
+    for (const state of ["idle", "thinking"] as const) {
+      await using t = await mountNode(<AnimatedAvatar state={state} eikon={state === "thinking" ? eikon([["custom idle"]]) : undefined} />, { width: 48, height: 25 })
+      const frame = defaultFrames(state).frames[0]!.join("\n")
+      await until(t, () => t.frame().split("\n").slice(0, 24).join("\n") === frame)
+      expect(t.frame().split("\n").slice(0, 24).join("\n")).toBe(frame)
+    }
+  })
+
   test("animated frames advance without React re-rendering the avatar", async () => {
     process.env.HERM_TEST_PERF = "1"
     const g = globalThis as TestGlobal

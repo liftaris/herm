@@ -1,6 +1,6 @@
 import { useEffect, useRef, memo } from "react"
 import type { TextNodeRenderable } from "@opentui/core"
-import { STATE_FRAMES, type AvatarState } from "./states"
+import { defaultFrames, type AvatarState } from "./states"
 import type { ParsedEikon, EikonState } from "./eikon"
 import { useTheme } from "../../theme"
 import * as prefs from "../../context/preferences"
@@ -16,10 +16,6 @@ import * as perf from "../../utils/perf"
  * loopFrom = N       → play once, hold last frame (timer stops)
  *
  * State change restarts from frame 0, so the intro always plays.
- * When an `eikon` is supplied and defines the current state, it wins;
- * states missing from the eikon fall back to the baked-in set (which
- * palindromes its frames to preserve the legacy ping-pong look under
- * this forward-only driver).
  */
 
 type PerfGlobal = typeof globalThis & {
@@ -36,6 +32,20 @@ export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
    *  reaches its last frame. Consumer decides fallthrough policy. */
   onHold?: (state: AvatarState) => void
 }) => {
+  const theme = useTheme().theme
+  try {
+    const clip = eikon?.resolve(`state.${state}`) ?? eikon?.states.get(state) ?? defaultFrames(state)
+    return <Playback state={state} clip={clip} onHold={onHold} />
+  } catch (err) {
+    return <text fg={theme.error}>{err instanceof Error ? err.message : String(err)}</text>
+  }
+})
+
+const Playback = memo(({ state, clip, onHold }: {
+  state: AvatarState
+  clip: EikonState
+  onHold?: (state: AvatarState) => void
+}) => {
   const g = globalThis as PerfGlobal
   if (process.env.HERM_TEST_PERF === "1") g.__hermAvatarRenders = (g.__hermAvatarRenders ?? 0) + 1
   const theme = useTheme().theme
@@ -43,8 +53,6 @@ export const AnimatedAvatar = memo(({ state = "idle", eikon, onHold }: {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const holdRef = useRef(onHold); holdRef.current = onHold
 
-  const signal = `state.${state}`
-  const clip: EikonState = eikon?.resolve(signal) ?? eikon?.states.get(state) ?? STATE_FRAMES[state]
   const { frames, fps, loopFrom } = clip
   const count = frames.length
   const lines = maxLines(frames)
