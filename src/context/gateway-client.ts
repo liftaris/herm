@@ -1,10 +1,9 @@
-// Stdio JSON-RPC 2.0 client for tui_gateway. Spawns the gateway as a child
-// process and speaks newline-delimited JSON on stdin/stdout.
-
 import { EventEmitter } from "events"
-import { homedir } from "os"
-import { resolve, delimiter } from "path"
-import { existsSync } from "fs"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { attach, type Dial } from "./owner-attach"
+import { canonical } from "./canonical"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
 import { prompt, type ServerRequest } from "./server-requests"
 import { encode } from "../utils/unicode"
@@ -13,13 +12,10 @@ const LOG_MAX = 200
 const LOG_PREVIEW = 240
 const STARTUP_MS = 15_000
 const REQUEST_MS = 120_000
-const WS_CONNECTING = 0
 const WS_OPEN = 1
-const WS_CLOSING = 2
-const WS_CLOSED = 3
 const decoder = new TextDecoder()
 
-export type GatewayEventSource = "stdio" | "websocket" | "control" | "internal"
+export type GatewayEventSource = "websocket" | "control" | "internal"
 
 type Diag = {
   count: number
@@ -27,21 +23,14 @@ type Diag = {
   line: (count: number) => string
 }
 
-/** Locate the hermes-agent source tree (gateway + hermes_cli live here).
- *  Default: ~/.hermes/hermes-agent (where `hermes update` installs it).
- *  Fallback: /usr/local/lib/hermes-agent (FHS layout for root Linux installs).
- *  Override with HERMES_AGENT_ROOT for dev clones / exotic layouts. */
 export function hermesAgentRoot(): string {
   if (process.env.HERMES_AGENT_ROOT) return process.env.HERMES_AGENT_ROOT
-  const home = process.env.HOME || homedir()
-  const homePath = `${home}/.hermes/hermes-agent`
-  if (existsSync(homePath)) return homePath
-  const fhs = "/usr/local/lib/hermes-agent"
-  if (existsSync(fhs)) return fhs
-  return homePath
+  const path = join(process.env.HOME || homedir(), ".hermes", "hermes-agent")
+  return !existsSync(path) && existsSync("/usr/local/lib/hermes-agent") ? "/usr/local/lib/hermes-agent" : path
 }
 
 type Pending = {
+  method: string
   resolve: (v: unknown) => void
   reject: (e: Error) => void
 }
@@ -73,28 +62,6 @@ function redact(raw: string): string {
     if (url.search) url.search = "?***"
     return url.toString()
   } catch { return "invalid gateway URL" }
-}
-
-export function python(root: string, platform: NodeJS.Platform = process.platform): string {
-  const env = process.env.HERMES_PYTHON?.trim()
-  if (env) return env
-
-  const venv = process.env.VIRTUAL_ENV?.trim()
-  const paths = platform === "win32"
-    ? [
-        venv && resolve(venv, "Scripts", "python.exe"),
-        resolve(root, "venv", "Scripts", "python.exe"),
-        resolve(root, ".venv", "Scripts", "python.exe"),
-      ]
-    : [
-        venv && resolve(venv, "bin", "python"),
-        venv && resolve(venv, "bin", "python3"),
-        resolve(root, "venv", "bin", "python"),
-        resolve(root, "venv", "bin", "python3"),
-        resolve(root, ".venv", "bin", "python"),
-        resolve(root, ".venv", "bin", "python3"),
-      ]
-  return paths.find(p => p && existsSync(p)) || (platform === "win32" ? "python" : "python3")
 }
 
 function asEvent(v: unknown): GatewayEvent | null {
@@ -160,31 +127,7 @@ function contract(ev: GatewayEvent): string {
   return raw === undefined || raw === null ? "unknown" : crop(String(raw))
 }
 
-// Read lines from a ReadableStream (Bun subprocess stdout/stderr)
-async function lines(stream: ReadableStream<Uint8Array>, cb: (line: string) => void) {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buf = ""
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const parts = buf.split("\n")
-      buf = parts.pop() || ""
-      for (const line of parts) {
-        if (line) cb(line)
-      }
-    }
-    // Flush remaining
-    if (buf.trim()) cb(buf)
-  } catch {
-    // Stream closed
-  }
-}
-
 export class GatewayClient extends EventEmitter {
-  private proc: ReturnType<typeof Bun.spawn> | null = null
   private ws: WebSocket | null = null
   private link: Promise<void> | null = null
   private target: string | null = null
@@ -199,13 +142,22 @@ export class GatewayClient extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | null = null
   private sub = false
 
-  private root(): string { return hermesAgentRoot() }
+  private generation = 0
+  private native = false
+  private description: Promise<canonical.Creation> | null = null
+  private subscriptions = new Map<string, canonical.Subscription>()
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  private seen = 0
+  private stopped = false
+
+  constructor(private readonly timing = { ping: 15_000, silence: 45_000 }) { super() }
 
   private push(ev: GatewayEvent, source: GatewayEventSource = "internal") {
     this.diagnose(ev, source)
     if (ev.type === "gateway.ready") {
       this.ok = true
       if (this.timer) { clearTimeout(this.timer); this.timer = null }
+      this.handshake()
     }
     if (this.sub) return void this.emit("event", ev)
     this.buf.push(ev)
@@ -240,7 +192,7 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
-  private dispatch(msg: Record<string, unknown>, source: GatewayEventSource = "stdio") {
+  private dispatch(msg: Record<string, unknown>, source: GatewayEventSource = "websocket") {
     if (typeof msg.method === "string" && msg.id !== undefined) {
       this.receive(msg)
       return
@@ -254,8 +206,10 @@ export class GatewayClient extends EventEmitter {
       const open = rec(res)?.open_requests
       if (Array.isArray(open)) open.forEach(frame => { if (rec(frame)) this.receive(frame, true) })
       if (msg.error) {
-        const err = msg.error as { message?: unknown }
-        p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
+        const err = rec(msg.error)
+        const message = `${err?.code ?? "RPC"}: ${typeof err?.message === "string" ? err.message : "request failed"}`
+        this.log(`[rpc] ${p.method}: ${message}`)
+        p.reject(new Error(message))
       } else {
         p.resolve(res)
       }
@@ -263,7 +217,12 @@ export class GatewayClient extends EventEmitter {
     }
 
     if (msg.method === "event") {
-      const ev = asEvent(msg.params)
+      const params = rec(msg.params)
+      const subscription = typeof params?.session_id === "string" ? this.subscriptions.get(params.session_id) : undefined
+      if (subscription && typeof params?.execution_generation === "number") subscription.generation = params.execution_generation
+      const ev = asEvent(this.native && params?.type === "session.info"
+        ? { ...params, payload: canonical.metadata(params.payload) }
+        : msg.params)
       if (ev) {
         if (ev.type === "request.cancel") this.requests.delete(ev.payload.id)
         this.push(ev, source)
@@ -274,9 +233,7 @@ export class GatewayClient extends EventEmitter {
   private write(frame: Record<string, unknown>) {
     const data = encode(frame).text
     if (this.ws?.readyState === WS_OPEN) { this.ws.send(data); return }
-    const stdin = this.proc?.stdin
-    if (!stdin || typeof stdin === "number" || this.proc?.exitCode !== null) throw new Error("gateway not connected")
-    stdin.write(data + "\n")
+    throw new Error("gateway not connected")
   }
 
   private receive(raw: Record<string, unknown>, replayed = false) {
@@ -304,71 +261,35 @@ export class GatewayClient extends EventEmitter {
     this.pending.clear()
   }
 
-  private connect(raw: string) {
-    const cwd = process.env.HERMES_CWD || process.cwd()
-    let url: string
-    try { url = websocketUrl(raw) }
-    catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      this.log(`[startup] websocket failed: ${message}`)
-      this.push({ type: "gateway.stderr", payload: { line: message } })
-      if (this.sub) this.emit("exit", null)
-      else this.exit = null
-      return
-    }
+  private disconnected(err: Error, code: number | null = null) {
+    this.ok = false
+    this.stopped = true
+    if (this.timer) clearTimeout(this.timer)
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.timer = null
+    this.heartbeat = null
+    this.fail(err)
+    this.log(`[gateway] ${err.message}`)
+    this.push({ type: "error", payload: { message: err.message } })
+    if (this.sub) this.emit("exit", code)
+    else this.exit = code
+  }
 
-    const safe = redact(url)
-    let ws: WebSocket
-    try { ws = new WebSocket(url) }
-    catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      this.log(`[startup] websocket failed (${safe}): ${message}`)
-      this.push({ type: "gateway.stderr", payload: { line: message } })
-      if (this.sub) this.emit("exit", null)
-      else this.exit = null
-      return
-    }
-
-    this.target = raw
+  private connect(dial: Dial, native: boolean): Promise<void> {
+    const url = websocketUrl(dial.url)
+    const ws = new WebSocket(url, dial.protocols)
     this.ws = ws
-    let settled = false
-    this.link = new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => {
-        if (settled) return
-        settled = true
-        void this.request("client.capabilities", { server_requests: true }).catch(err => {
-          this.push({ type: "error", payload: { message: String(err) } })
-        })
-        resolve()
-      }, { once: true })
-      ws.addEventListener("error", () => {
-        if (settled) return
-        settled = true
-        reject(new Error("gateway websocket connection failed"))
-        try { ws.close() } catch {}
-      }, { once: true })
-      ws.addEventListener("close", event => {
-        if (settled) return
-        settled = true
-        reject(new Error(`gateway websocket closed (${event.code}) during connect`))
-      }, { once: true })
-    })
-    this.link.catch(() => {})
-
+    this.native = native
+    this.seen = performance.now()
     this.timer = setTimeout(() => {
       if (this.ok || this.ws !== ws) return
-      this.log(`[startup] timed out (websocket=${safe}, cwd=${cwd})`)
-      this.push({ type: "gateway.start_timeout", payload: { cwd, python: "websocket" } })
       this.ws = null
-      this.link = null
-      this.fail(new Error("gateway websocket startup timeout"))
-      try { ws.close() } catch {}
-      if (this.sub) this.emit("exit", null)
-      else this.exit = null
+      this.disconnected(new Error(`gateway websocket startup timed out (${redact(url)})`))
+      ws.close()
     }, STARTUP_MS)
-
     ws.addEventListener("message", event => {
       if (this.ws !== ws) return
+      this.seen = performance.now()
       const raw = text(event.data)
       if (!raw) return
       try { this.dispatch(JSON.parse(raw), "websocket") }
@@ -378,134 +299,80 @@ export class GatewayClient extends EventEmitter {
         this.push({ type: "gateway.protocol_error", payload: { preview } })
       }
     })
-    ws.addEventListener("error", () => {
-      if (this.ws !== ws) return
-      const line = `websocket transport error (${safe})`
-      this.log(`[gateway] ${line}`)
-      this.push({ type: "gateway.stderr", payload: { line } })
-    })
     ws.addEventListener("close", event => {
       if (this.ws !== ws) return
-      if (this.timer) { clearTimeout(this.timer); this.timer = null }
       this.ws = null
-      this.link = null
-      this.fail(new Error(`gateway websocket closed${event.code ? ` (${event.code})` : ""}`))
-      if (this.sub) this.emit("exit", event.code)
-      else this.exit = event.code
+      this.disconnected(new Error(`gateway websocket closed (${event.code})${event.reason ? `: ${event.reason}` : ""}`), event.code)
+    })
+    return new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => {
+        if (this.ws !== ws) return reject(new Error("gateway restarted"))
+        if (native && ws.protocol !== "hermes-gateway-v1") {
+          const err = new Error("missing hermes-gateway-v1 subprotocol echo; update Hermes")
+          this.ws = null
+          this.disconnected(err)
+          ws.close()
+          return reject(err)
+        }
+        resolve()
+      }, { once: true })
+      ws.addEventListener("error", () => reject(new Error(`gateway websocket connection failed (${redact(url)})`)), { once: true })
+      ws.addEventListener("close", event => reject(new Error(`gateway websocket closed (${event.code}): ${event.reason}`)), { once: true })
     })
   }
 
   start() {
-    const raw = gatewayUrl()
-    const root = this.root()
-    const bin = python(root)
-    const cwd = process.env.HERMES_CWD || process.cwd()
-    const env = { ...process.env } as Record<string, string>
-    // Ensure the gateway and agent tools resolve to the user's launch cwd.
-    // TERMINAL_CWD is the canonical env var the agent reads for working dir.
-    if (!env.TERMINAL_CWD) env.TERMINAL_CWD = cwd
-    const pp = env.PYTHONPATH?.trim()
-    env.PYTHONPATH = pp ? `${root}${delimiter}${pp}` : root
-    env.HERMES_PYTHON_SRC_ROOT = root
-
-    // Reset state
+    this.kill()
+    this.stopped = false
+    const generation = this.generation
     this.ok = false
     this.buf = []
     this.requests.clear()
+    this.subscriptions.clear()
+    this.description = null
+    this.sid = ""
     this.exit = undefined
-
-    let restarted = false
-    const previous = this.proc
-    if (previous) {
-      this.proc = null
-      this.fail(new Error("gateway restarted"))
-      restarted = true
-      try { previous.kill() } catch {}
+    const raw = gatewayUrl()
+    this.target = raw
+    const dial = async () => {
+      const grant = raw ? { url: raw, protocols: [] } : await attach()
+      if (generation !== this.generation) throw new Error("gateway restarted")
+      await this.connect(grant, !raw)
     }
-
-    const socket = this.ws
-    if (socket) {
+    this.link = dial()
+    void this.link.catch(err => {
+      if (generation !== this.generation || this.stopped) return
+      const ws = this.ws
       this.ws = null
-      this.link = null
-      this.target = null
-      if (!restarted) this.fail(new Error("gateway restarted"))
-      try { socket.close() } catch {}
-    }
+      this.disconnected(err instanceof Error ? err : new Error(String(err)))
+      ws?.close()
+    })
+  }
 
-    if (this.timer) clearTimeout(this.timer)
-    if (raw) { this.connect(raw); return }
-    this.timer = setTimeout(() => {
-      if (this.ok) return
-      this.log(`[startup] timed out (python=${bin}, cwd=${cwd})`)
-      this.push({ type: "gateway.start_timeout", payload: { cwd, python: bin } })
-      const proc = this.proc
-      if (!proc || proc.exitCode !== null) return
-      try { proc.kill() }
-      catch (err) {
-        this.proc = null
-        const failure = new Error(`gateway startup timeout: ${err instanceof Error ? err.message : String(err)}`)
-        this.fail(failure)
-        if (this.sub) this.emit("exit", null)
-        else this.exit = null
+  private handshake() {
+    void this.request("client.capabilities", { server_requests: true }).catch(err => {
+      this.push({ type: "error", payload: { message: String(err) } })
+    })
+    this.seen = performance.now()
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.heartbeat = setInterval(() => {
+      if (performance.now() - this.seen >= this.timing.silence) {
+        const ws = this.ws
+        this.ws = null
+        this.disconnected(new Error(`gateway heartbeat timeout: no inbound frame for ${this.timing.silence / 1000} seconds`))
+        ws?.close()
+        return
       }
-    }, STARTUP_MS)
+      void this.request("gateway.ping").catch(() => {})
+    }, this.timing.ping)
+    if (this.native) void this.describe().catch(err => this.push({ type: "error", payload: { message: String(err) } }))
+  }
 
-    const proc = (() => {
-      try {
-        return Bun.spawn([bin, "-u", "-m", "tui_gateway.entry"], {
-          cwd,
-          env,
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-      } catch (err) {
-        if (this.timer) { clearTimeout(this.timer); this.timer = null }
-        this.proc = null
-        const message = err instanceof Error ? err.message : String(err)
-        this.log(`[startup] spawn failed: ${message}`)
-        this.push({ type: "gateway.stderr", payload: { line: message } })
-        if (this.sub) this.emit("exit", null)
-        else this.exit = null
-        return null
-      }
-    })()
-    if (!proc) return
-    this.proc = proc
-
-    // Read stdout lines — Bun returns ReadableStream
-    if (proc.stdout) {
-      lines(proc.stdout as ReadableStream<Uint8Array>, raw => {
-        if (this.proc !== proc) return
-        try {
-          this.dispatch(JSON.parse(raw), "stdio")
-        } catch {
-          const preview = raw.trim().slice(0, LOG_PREVIEW) || "(empty)"
-          this.log(`[protocol] malformed: ${preview}`)
-          this.push({ type: "gateway.protocol_error", payload: { preview } })
-        }
-      })
-    }
-
-    // Read stderr lines
-    if (proc.stderr) {
-      lines(proc.stderr as ReadableStream<Uint8Array>, raw => {
-        if (this.proc !== proc) return
-        const line = raw.trim()
-        if (!line) return
-        this.log(line)
-        this.push({ type: "gateway.stderr", payload: { line } })
-      })
-    }
-
-    // Handle exit — guard against a superseded proc (restart kills the
-    // old one, whose exit handler must not touch the new proc's state).
-    proc.exited.then(code => {
-      if (this.proc !== proc) return
-      if (this.timer) { clearTimeout(this.timer); this.timer = null }
-      this.fail(new Error(`gateway exited${code === null ? "" : ` (${code})`}`))
-      if (this.sub) this.emit("exit", code)
-      else this.exit = code
+  private describe() {
+    const generation = this.generation
+    return this.description ??= this.request("runtime.describe").then(value => canonical.creation.parse(rec(value)?.session_create)).catch(err => {
+      if (generation === this.generation) this.description = null
+      throw err
     })
   }
 
@@ -532,95 +399,72 @@ export class GatewayClient extends EventEmitter {
     this.sid = sid
   }
 
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    const raw = gatewayUrl()
-    if (raw) return this.remote<T>(raw, method, params)
-    if (!this.proc || this.proc.exitCode !== null) this.start()
-
-    const stdin = this.proc?.stdin
-    if (!stdin || typeof stdin === "number") return Promise.reject(new Error("gateway not running"))
-
+  async request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (!this.link && !this.stopped) this.start()
+    if (this.target !== gatewayUrl() && !this.stopped) this.start()
+    const link = this.link
+    const generation = this.generation
+    if (!link || this.stopped) throw new Error("gateway disconnected; reconnect manually")
+    await link
+    if (generation !== this.generation) throw new Error("gateway restarted")
+    const contract = this.native && method === "session.create" ? await this.describe() : null
+    if (generation !== this.generation || this.stopped) throw new Error("gateway restarted")
+    const merged = this.sid && params.session_id === undefined && !["runtime.describe", "client.capabilities", "gateway.ping", "session.create"].includes(method)
+      ? { session_id: this.sid, ...params } : params
+    const frame = this.native ? canonical.prepare(method, merged, contract, this.subscriptions) : { method, params: merged }
     const rid = `r${++this.id}`
-    const writer = stdin as { write(data: string | Uint8Array): number }
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
-
-    return new Promise((resolve, reject) => {
+    const value = await new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (this.pending.delete(rid)) reject(new Error(`timeout: ${method}`))
       }, REQUEST_MS)
-
       this.pending.set(rid, {
-        reject: e => { clearTimeout(timeout); reject(e) },
-        resolve: v => { clearTimeout(timeout); resolve(v as T) },
+        method,
+        reject: err => { clearTimeout(timeout); reject(err) },
+        resolve: value => { clearTimeout(timeout); resolve(value) },
       })
-
       try {
-        const frame = encode({ jsonrpc: "2.0", id: rid, method, params: merged })
-        if (frame.issues.length) {
-          const detail = frame.issues.map(x => `${x.path}:${x.count}`).join(", ")
-          this.log(`[wire] sanitized invalid unicode for ${method}: ${detail}`)
-        }
-        writer.write(frame.text + "\n")
-      } catch (e) {
+        const encoded = encode({ jsonrpc: "2.0", id: rid, ...frame })
+        if (encoded.issues.length) this.log(`[wire] sanitized invalid unicode for ${method}: ${encoded.issues.map(x => `${x.path}:${x.count}`).join(", ")}`)
+        if (this.ws?.readyState !== WS_OPEN) throw new Error(`gateway not connected: ${method}`)
+        this.ws.send(encoded.text)
+      } catch (err) {
         clearTimeout(timeout)
         this.pending.delete(rid)
-        reject(e instanceof Error ? e : new Error(String(e)))
+        reject(err)
       }
     })
-  }
-
-  private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
-    try { websocketUrl(raw) }
-    catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
-    if (this.target !== raw || !this.ws || this.ws.readyState === WS_CLOSING || this.ws.readyState === WS_CLOSED)
-      this.start()
-
-    const rid = `r${++this.id}`
-    const merged = this.sid && params.session_id === undefined
-      ? { session_id: this.sid, ...params }
-      : params
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (this.pending.delete(rid)) reject(new Error(`timeout: ${method}`))
-      }, REQUEST_MS)
-      this.pending.set(rid, {
-        reject: e => { clearTimeout(timeout); reject(e) },
-        resolve: value => { clearTimeout(timeout); resolve(value as T) },
-      })
-
-      const send = async () => {
-        try {
-          if (this.ws?.readyState === WS_CONNECTING) await this.link
-          if (!this.pending.has(rid)) return
-          if (!this.ws || this.ws.readyState !== WS_OPEN) throw new Error(`gateway not connected: ${method}`)
-          const frame = encode({ jsonrpc: "2.0", id: rid, method, params: merged })
-          if (frame.issues.length) {
-            const detail = frame.issues.map(x => `${x.path}:${x.count}`).join(", ")
-            this.log(`[wire] sanitized invalid unicode for ${method}: ${detail}`)
-          }
-          this.ws.send(frame.text)
-        } catch (err) {
-          clearTimeout(timeout)
-          if (this.pending.delete(rid)) reject(err instanceof Error ? err : new Error(String(err)))
-        }
-      }
-      void send()
-    })
+    if (generation !== this.generation) throw new Error("gateway restarted")
+    if (this.native && frame.method === "session.detach") this.subscriptions.delete(String(frame.params.session_id))
+    const result = this.native ? canonical.snapshot(frame.method, value, this.subscriptions) : value
+    if (this.native && (frame.method === "session.create" || frame.method === "session.resume")) {
+      const data = rec(result)
+      const info = rec(data?.info)
+      if (info && typeof data?.session_id === "string") this.push({ type: "session.info", session_id: data.session_id, payload: {
+        ...info, session_id: data.session_id, running: typeof data.running === "boolean" ? data.running : false,
+      } })
+    }
+    return result as T
   }
 
   kill() {
-    this.proc?.kill()
+    this.generation++
+    this.stopped = true
+    this.ok = false
     const ws = this.ws
-    if (!ws) return
+    if (ws?.readyState === WS_OPEN && this.native) {
+      for (const [session_id, subscription] of this.subscriptions)
+        ws.send(encode({ jsonrpc: "2.0", id: `detach-${++this.id}`, method: "session.detach", params: { session_id, subscription_id: subscription.id } }).text)
+    }
+    this.subscriptions.clear()
     this.ws = null
     this.link = null
     this.target = null
-    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    if (this.timer) clearTimeout(this.timer)
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.timer = null
+    this.heartbeat = null
     this.fail(new Error("gateway websocket closed"))
-    try { ws.close() } catch {}
+    ws?.close()
   }
 
   get ready(): boolean {

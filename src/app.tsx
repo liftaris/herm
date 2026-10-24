@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Profiler, useState, useEffect, useRef, useCallback, useMemo, useReducer, useSyncExternalStore } from "react"
 import * as perf from "./utils/perf"
 import { hasInterp, interpolate } from "./utils/interpolate"
-import { GatewayProvider, useGateway, type Gateway } from "./context/gateway"
+import { GatewayProvider, useGateway, useGatewayRestart, useGatewayState, type Gateway } from "./context/gateway"
 import type { SessionInfo, ImageAttachResponse, ImageDetachResponse } from "./context/wire"
 import type { Message, Usage } from "./types/message"
 import { text as msgText } from "./types/message"
@@ -21,7 +21,8 @@ import { copySelection, copyText as clipCopy } from "./utils/clipboard"
 import { ThemeProvider, useTheme } from "./theme"
 import { DialogProvider, useDialog, useDialogOpen } from "./ui/dialog"
 import { ToastProvider, useToast } from "./ui/toast"
-import { CommandProvider } from "./ui/command"
+import { gatewayUrl } from "./context/gateway-client"
+import { CommandProvider, useCommand } from "./ui/command"
 import { KeysProvider } from "./keys"
 import { Splash } from "./ui/Splash"
 import { lastReal } from "./service/sessions-db"
@@ -172,6 +173,13 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
   const [usage, setUsage] = useState<Usage | undefined>(undefined)
   const [info, setInfo] = useState<SessionInfo | null>(null)
   const capabilities = sessionCapabilities({ sid, ready, streaming: active })
+  const reconnect = useGatewayRestart()
+  const connection = useGatewayState()
+  const commands = useCommand()
+  useEffect(() => {
+    if (connection !== "disconnected") return
+    return commands.register([{ title: "Reconnect to Hermes", value: "gateway.reconnect", category: "Gateway", onSelect: () => reconnect("resume") }])
+  }, [connection, commands, reconnect])
   const [title, setTitle] = useState("")
   const caption = title.trim()
   const titleRef = useRef(caption); titleRef.current = caption
@@ -568,6 +576,7 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
     goToTab(CHAT_TAB)
     try {
       const res = await session.activate(target)
+      if (!gatewayUrl() && prev && prev !== res.id) void session.close(prev)
       reset()
       setSid(res.id)
       setDurable(res.key)

@@ -65,7 +65,7 @@ Usage:
   herm -c, --continue     resume the last real TUI session
   herm --resume [id]      resume last (or the given) session
   herm --profile <name>   start once with a profile; do not change the default
-  herm --gateway-url URL  connect to a dashboard/tui_gateway WebSocket
+  herm --gateway-url URL  connect to an explicit remote dashboard WebSocket
   herm --no-splash        skip the launch splash
   herm -v, --version      print version
   herm -h, --help         show this help
