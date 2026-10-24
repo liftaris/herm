@@ -12,6 +12,7 @@
  */
 
 import { createContext, useState, useCallback, useMemo, useEffect } from "react"
+import { useRenderer } from "@opentui/react"
 import { makeUse } from "../context/helper"
 import type { ReactNode } from "react"
 import type { SyntaxStyle } from "@opentui/core"
@@ -57,6 +58,7 @@ export const ThemeProvider = ({
   initial,
   mode: initialMode = "dark",
 }: ThemeProviderProps) => {
+  const renderer = useRenderer()
   // Active theme is a preference, not component state — usePref makes
   // it follow prefs.reload() so profile-switch retints without a
   // remount. `initial` wins only when no pref is set (tests / fresh
@@ -114,8 +116,8 @@ export const ThemeProvider = ({
   const has = hasName
 
   const syntaxStyle = useMemo(
-    () => (resolved ? syntax(resolved) : null),
-    [resolved],
+    () => (resolved ? syntax(resolved, renderer.nativeScene) : null),
+    [resolved, renderer],
   )
 
   const value = useMemo<ThemeContext | null>(() => {

@@ -3,17 +3,12 @@
 // there is exactly one global useKeyboard.
 
 import { useKeyboard, useRenderer } from "@opentui/react"
-import { resolveRenderLib, RGBA, type ParsedKey } from "@opentui/core"
+import type { CliRenderer, ParsedKey } from "@opentui/core"
 
 /** Wipe the physical screen and force a full re-emit on next frame. */
-export function redraw(renderer: {
-  rendererPtr: unknown
-  currentRenderBuffer: { clear(c: unknown): void }
-  requestRender(): void
-}) {
-  resolveRenderLib().clearTerminal(renderer.rendererPtr as never)
-  renderer.currentRenderBuffer.clear(RGBA.fromValues(0, 0, 0, 0))
-  renderer.requestRender()
+export async function redraw(renderer: CliRenderer) {
+  await renderer.suspend()
+  if (!renderer.isDestroyed) await renderer.resume()
 }
 import { useRef, useEffect, type RefObject } from "react"
 import { editInEditor } from "../utils/editor"
@@ -103,7 +98,7 @@ export function useAppKeys(o: Opts) {
     )
   }, [keys.table])
 
-  useKeyboard((key) => {
+  useKeyboard(async (key) => {
     const c = o.composer.current
 
     if (isDegradedMouseInput(key)) {
@@ -146,27 +141,19 @@ export function useAppKeys(o: Opts) {
     }
 
     if (keys.match("app.suspend", key)) {
-      renderer.suspend()
+      key.stopPropagation()
+      await renderer.suspend()
+      if (renderer.isDestroyed) return
+      process.once("SIGCONT", async () => {
+        if (!renderer.isDestroyed) await renderer.resume()
+      })
       process.kill(process.pid, "SIGTSTP")
-      // Resumes on SIGCONT; OpenTUI's suspend/resume cycle re-enables
-      // raw mode and redraws on the next frame.
-      process.once("SIGCONT", () => renderer.resume())
       return
     }
 
     if (keys.match("app.redraw", key)) {
-      // OpenTUI's renderNative() only emits cells that diff against
-      // the previous frame, so pty garbage from a child process / ssh
-      // banner / macOS Cmd+K sticks until those cells happen to
-      // change. clearTerminal() writes CSI 2J + CSI H to wipe the
-      // physical screen; zeroing currentRenderBuffer (the diff
-      // baseline — same trick resume() uses) makes the next normal
-      // render see every populated cell as changed and re-emit it.
-      // Calling lib.render(ptr, true) directly would bypass the loop
-      // and rot the native buffer-swap state, so go through
-      // requestRender() instead.
-      redraw(renderer)
       key.stopPropagation()
+      await redraw(renderer)
       return
     }
 

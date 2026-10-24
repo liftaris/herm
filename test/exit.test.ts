@@ -1,28 +1,29 @@
-import { describe, expect, it, spyOn } from "bun:test"
-import * as exit from "../src/app/exit"
+import { describe, expect, it } from "bun:test"
+import { quit } from "../src/app/exit"
 
 describe("quit()", () => {
-  it("kills gateway, resets title, destroys renderer in order before exit", () => {
+  it("waits for terminal restoration before exiting, even on repeated quit", async () => {
     const steps: string[] = []
-    const gw = { kill: () => steps.push("kill") }
+    const closed = Promise.withResolvers<void>()
+    const gw = { kill: () => { steps.push("kill") } }
     const renderer = {
-      destroy: () => steps.push("destroy"),
-      setTerminalTitle: (t: string) => {
-        expect(t).toBe("")
+      closed: closed.promise,
+      destroy: () => { steps.push("destroy") },
+      setTerminalTitle: (title: string) => {
+        expect(title).toBe("")
         steps.push("title")
       },
     }
-
-    const stop = spyOn(process, "exit").mockImplementation((() => {
+    const exit = (code: number) => {
+      expect(code).toBe(0)
       steps.push("exit")
-      throw new Error("process.exit")
-    }) as typeof process.exit)
-
-    try {
-      expect(() => exit.quit(renderer, undefined, undefined, gw)).toThrow("process.exit")
-      expect(steps).toEqual(["kill", "title", "destroy", "exit"])
-    } finally {
-      stop.mockRestore()
     }
+
+    const pending = quit(renderer, undefined, undefined, gw, exit)
+    await quit(renderer, undefined, undefined, gw, exit)
+    expect(steps).toEqual(["kill", "title", "destroy"])
+    closed.resolve()
+    await pending
+    expect(steps).toEqual(["kill", "title", "destroy", "exit"])
   })
 })

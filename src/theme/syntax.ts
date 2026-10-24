@@ -1,8 +1,8 @@
-import { SyntaxStyle, type ThemeTokenStyle } from "@opentui/core"
+import { SyntaxStyle, type NativeResourceOwner, type ThemeTokenStyle } from "@opentui/core"
 import type { Theme } from "./types"
 
-export function syntax(theme: Theme): SyntaxStyle {
-  return SyntaxStyle.fromTheme(rules(theme))
+export function syntax(theme: Theme, owner: NativeResourceOwner): SyntaxStyle {
+  return SyntaxStyle.fromTheme(rules(theme), owner)
 }
 
 function rules(theme: Theme): ThemeTokenStyle[] {
