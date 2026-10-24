@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import ts from "typescript"
+import ts from "typescript-api"
 import { dirname, isAbsolute, resolve } from "node:path"
 
 type Hit = { path: string; line: number; text: string }
