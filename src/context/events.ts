@@ -176,6 +176,12 @@ export function mapEvent(ev: GatewayEvent, side: Side): Action | null {
     case "terminal.close":
     case "tool.output_risk":
     case "voice.interrupted":
+    // Change signals: the Sessions tab refetches on sessions.changed itself; Herm has no
+    // platform-status or Group Chat surface, and useStream reattaches a reclaimed session.
+    case "sessions.changed":
+    case "platforms.changed":
+    case "groups.changed":
+    case "session.reclaimed":
       return null
 
     case "subagent.start":

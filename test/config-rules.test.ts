@@ -81,10 +81,10 @@ describe("rules", () => {
     expect(check("tools.tool_search.threshold_pct", "101")).toMatch(/0–100/)
   })
 
-  test("duration pattern", () => {
-    expect(check("prompt_caching.cache_ttl", "5m")).toBeNull()
-    expect(check("prompt_caching.cache_ttl", "2h")).toBeNull()
-    expect(check("prompt_caching.cache_ttl", "5")).toMatch(/duration/)
+  test("cache ttl accepts only the Hermes modes", () => {
+    for (const ok of ["auto", "5m", "1h", "off"]) expect(check("prompt_caching.cache_ttl", ok)).toBeNull()
+    expect(check("prompt_caching.cache_ttl", "2h")).toMatch(/auto, 5m, 1h, or off/)
+    expect(check("prompt_caching.cache_ttl", "5")).toMatch(/auto, 5m, 1h, or off/)
   })
 
   test("unknown key passes", () => {

@@ -171,6 +171,31 @@ describe("GatewayClient websocket attach mode", () => {
     gw.kill()
   })
 
+  test("adds the active session_id only where the method's params declare it", async () => {
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=abc"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const gw = new GatewayClient()
+    gw.start()
+    const ws = FakeSocket.list[0]!
+    ws.open()
+    await Bun.sleep(0)
+    gw.setSession("live-sid")
+    const methods = ["prompt.submit", "session.list", "session.active_list", "shell.exec", "cli.exec"]
+    const calls = methods.map(method => gw.request(method, {}).catch(() => {}))
+    await Bun.sleep(0)
+    const sent = Object.fromEntries(ws.sent.map(data => JSON.parse(data) as { method: string; params: Record<string, unknown> })
+      .filter(frame => methods.includes(frame.method)).map(frame => [frame.method, frame.params.session_id]))
+    expect(sent).toEqual({
+      "prompt.submit": "live-sid",
+      "session.list": undefined,
+      "session.active_list": undefined,
+      "shell.exec": undefined,
+      "cli.exec": undefined,
+    })
+    gw.kill()
+    await Promise.all(calls)
+  })
+
   test("accepts producer-derived gateway event envelope fixtures", async () => {
     process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=abc"
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket

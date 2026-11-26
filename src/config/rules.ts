@@ -50,8 +50,9 @@ export const RULES: Record<string, Rule> = {
   // ratios
   "compression.threshold": float(0.1, 0.95),
   "compression.target_ratio": float(0.05, 0.9),
+  // Hermes: "auto" (1h for human-paced sessions, 5m otherwise), "5m", "1h", or "off" to disable.
   "prompt_caching.cache_ttl": raw =>
-    /^\d+[smhd]$/.test(raw.trim()) ? null : "expected duration e.g. 5m, 1h",
+    ["auto", "5m", "1h", "off"].includes(raw.trim()) ? null : "expected auto, 5m, 1h, or off",
 
   // turn/iteration budgets
   "agent.max_turns": int(1, 10000),

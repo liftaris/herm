@@ -622,6 +622,8 @@ export const Sessions = memo((props: Props) => {
   const vscroll = useRef<ScrollBoxRenderable | null>(null)
   const seen = useRef(false)
   const gen = useRef(0)
+  const changed = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reload = useRef<() => Promise<void>>(async () => {})
 
   // Space arms one parent for inline children. The branch is only
   // visible while the cursor is on that parent or one of its children,
@@ -704,6 +706,10 @@ export const Sessions = memo((props: Props) => {
 
   useGatewayEvent(ev => {
     if (ev.type === "session.title") patchTitle(ev.payload.session_id, ev.payload.title)
+    // state.db moved; Hermes sends this several times per turn, so coalesce into one refetch.
+    if (ev.type !== "sessions.changed") return
+    if (changed.current) clearTimeout(changed.current)
+    changed.current = setTimeout(() => { changed.current = null; void reload.current() }, 500)
   })
 
   // Two-stage paint. io.list is off-thread, so the mount frame commits
@@ -783,6 +789,8 @@ export const Sessions = memo((props: Props) => {
   }, [gw, props.currentId, io, cached])
 
   useEffect(() => { load() }, [load])
+  reload.current = load
+  useEffect(() => () => { if (changed.current) clearTimeout(changed.current) }, [])
   useEffect(() => () => { gen.current++ }, [])
 
   // Seed anchor once rows arrive. If active rows arrive after the

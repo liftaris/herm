@@ -36,7 +36,11 @@ where no generator covers the surface yet.
   `bun run gen-hermes-manifest`, `scripts/hermes-source.ts`,
   `scripts/gen-hermes-manifest.ts`, and `src/compat/hermes-manifest.ts`. This
   single extraction owns gateway RPCs/events, session metadata, slash commands,
-  TUI extras, and dynamic command classes.
+  TUI extras, and dynamic command classes. It also reads Hermes's
+  `apps/shared/src/gateway-contract.openrpc.json` and writes
+  `src/compat/hermes-params.ts`: the legacy and canonical methods whose params
+  declare `session_id`. Hermes params are `extra="forbid"` and answer `4000` to
+  an undeclared key, so the client adds the active session only to those methods.
 - Semantic config drift: `bun run config-drift -- --pinned-root /path/to/hermes-agent`,
   `scripts/config-drift.ts`, and
   `src/config/semantics.ts`. Add `--current-root` and `--warn-current` for an
