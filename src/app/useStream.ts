@@ -81,6 +81,9 @@ export function useStream(c: Ctx) {
   // ended the turn.
   const interrupted = useRef(false)
   const info = useRef(false)
+  // session.info arrives several times per turn; post the MCP failure notice only when the
+  // failing set for a session changes, not on every repeat.
+  const mcp = useRef("")
 
   // Delta batching: streamed text/reasoning chunks accumulate in a
   // ref and flush at most once per 16ms. Every delta otherwise
@@ -132,6 +135,21 @@ export function useStream(c: Ctx) {
     const x = ctx.current
     if (ev.type === "gateway.ready") info.current = false
     if (ev.type === "message.start") x.start()
+    // Hermes reclaims idle live sessions (idle_timeout, lru_evict, ws_orphan_reap); the old live id
+    // then answers nothing, so reattach to the stored session before the next prompt needs it.
+    if (ev.type === "session.reclaimed") {
+      if (!x.sidRef.current || ev.payload.session_id !== x.sidRef.current) return
+      x.session.resume(ev.payload.stored_session_id).then(r => {
+        x.setSid(r.id)
+        store(r.key, r.id)
+        if (r.info) x.setInfo(r.info)
+        x.dispatch({ kind: "system", text: `Hermes reclaimed this session (${ev.payload.reason}); reattached.` })
+      }).catch((err: unknown) => {
+        x.setStatus(`session reclaimed (${ev.payload.reason}); reattach failed: ${err instanceof Error ? err.message : String(err)}`)
+        x.setErrorPulse(true)
+      })
+      return
+    }
     if (ev.type === "background.complete" && ev.session_id && x.sidRef.current
         && ev.session_id !== x.sidRef.current) {
       bg.unregister(ev.payload.task_id)
@@ -186,10 +204,14 @@ export function useStream(c: Ctx) {
         // a feedback loop (config.get ↔ session.title ↔ session.info).
         if (si.title !== undefined) x.setTitle(si.title)
         const bad = (si.mcp_servers ?? []).filter(s => !s.connected)
-        if (bad.length) x.dispatch({
-          kind: "system",
-          text: `MCP: ${bad.length} server(s) failed to connect — ${bad.map(s => s.name + (s.error ? ` (${s.error})` : "")).join(", ")}`,
-        })
+        const text = bad.length
+          ? `MCP: ${bad.length} server(s) failed to connect — ${bad.map(s => s.name + (s.error ? ` (${s.error})` : "")).join(", ")}`
+          : ""
+        const key = `${si.session_id ?? ev.session_id ?? ""}\u0000${text}`
+        if (si.mcp_servers !== undefined) {
+          if (text && mcp.current !== key) x.dispatch({ kind: "system", text })
+          mcp.current = key
+        }
         gw.request<{ value?: string }>("config.get", { key: "busy" }).then(r => {
           const m = r.value
           if (m === "queue" || m === "steer" || m === "interrupt") x.setBusy(m)

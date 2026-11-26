@@ -62,12 +62,25 @@ COMMAND_REGISTRY: list[CommandDef] = [
 ]
 `
 
+const openrpc = JSON.stringify({
+  methods: [
+    { name: "session.create", params: [{ name: "params", schema: { properties: { title: {} } } }] },
+    { name: "projects.list", params: [{ name: "params", schema: { $ref: "#/components/schemas/ProjectsListParams" } }] },
+  ],
+  "x-canonical-methods": [
+    { name: "session.create", params: [{ name: "params", schema: { properties: { session_id: {}, source: {} } } }] },
+  ],
+  components: { schemas: { ProjectsListParams: { properties: { session_id: {}, profile: {} } } } },
+})
+
 const prep = (files: Record<string, string> = {}) => {
   const root = mkdtempSync(join(tmpdir(), "herm-manifest-"))
   const agent = join(root, "agent")
   mkdirSync(join(agent, "tui_gateway", "contracts"), { recursive: true })
   mkdirSync(join(agent, "hermes_cli"), { recursive: true })
+  mkdirSync(join(agent, "apps", "shared", "src"), { recursive: true })
   const all: Record<string, string> = {
+    "apps/shared/src/gateway-contract.openrpc.json": openrpc,
     "hermes_constants.py": `STYLES: tuple[str, ...] = ("ascii", "emoji")\n`,
     "hermes_cli/commands.py": commands,
     "tui_gateway/server.py": server,
@@ -131,6 +144,9 @@ describe("Hermes producer manifest generator", () => {
       expect(text).toContain('"argsHint":"[ascii|emoji]"')
       expect(text).toContain('"desktopContract": 4')
       expect(text).toContain('"stored_session_id"')
+      const params = await Bun.file(join(root, "hermes-params.ts")).text()
+      expect(params).toContain('LEGACY_SESSION_SCOPED = [\n  "projects.list"\n]')
+      expect(params).toContain('CANONICAL_SESSION_SCOPED = [\n  "session.create"\n]')
       expect((await run(root, ["--check", "--out", one, "--overlay", policy])).code).toBe(0)
       writeFileSync(one, `${text}\n// stale\n`)
       const stale = await run(root, ["--check", "--out", one, "--overlay", policy])
@@ -160,6 +176,17 @@ describe("Hermes producer manifest generator", () => {
       const res = await run(root, ["--out", join(root, "out.ts"), "--overlay", overlay(root, rows)])
       expect(res.code).toBe(1)
       expect(res.err).toContain("duplicate RPC method")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("fails closed when a producer method has no OpenRPC params contract", async () => {
+    const root = prep({ "tui_gateway/contracts/more.py": `method("session.resume", params=None, result=None)\n` })
+    try {
+      const res = await run(root, ["--out", join(root, "out.ts"), "--overlay", overlay(root, rows)])
+      expect(res.code).toBe(1)
+      expect(res.err).toContain("has no params contract for: session.resume")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

@@ -66,6 +66,10 @@ export type GatewayEvent = ({
   | { type: "subagent.tool"; payload: SubagentPayload }
   | { type: "subagent.progress"; payload: SubagentPayload }
   | { type: "subagent.complete"; payload: SubagentPayload }
+  | { type: "sessions.changed"; payload?: Record<string, never> }
+  | { type: "platforms.changed"; payload?: Record<string, never> }
+  | { type: "groups.changed"; payload?: { room_ids?: string[] | null; broadcast_id?: string | null } }
+  | { type: "session.reclaimed"; payload: { session_id: string; stored_session_id: string; reason: string } }
   | { type: "error"; payload?: { message?: string } }
 ))
 
@@ -117,6 +121,10 @@ export const GATEWAY_EVENT_TYPES = [
   "subagent.tool",
   "subagent.progress",
   "subagent.complete",
+  "sessions.changed",
+  "platforms.changed",
+  "groups.changed",
+  "session.reclaimed",
   "error",
 ] as const satisfies readonly GatewayEvent["type"][]
 

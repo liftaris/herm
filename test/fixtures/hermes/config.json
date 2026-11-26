@@ -17,6 +17,6 @@
       "hermes_cli/config_defaults.py",
       "tui_gateway/server.py"
     ],
-    "source_revision": "c78ca093aa4b6759c055c3ed2bfbe7f741cf0292"
+    "source_revision": "c8f866c48f44bb07f74b06dec80efe78093ea058"
   }
 }

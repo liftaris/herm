@@ -44,6 +44,11 @@ const write = (root: string) => {
   const dir = join(root, "agent")
   mkdirSync(join(dir, "hermes_cli"), { recursive: true })
   mkdirSync(join(dir, "tui_gateway", "contracts"), { recursive: true })
+  mkdirSync(join(dir, "apps", "shared", "src"), { recursive: true })
+  writeFileSync(join(dir, "apps", "shared", "src", "gateway-contract.openrpc.json"), JSON.stringify({
+    methods: [{ name: "session.create", params: [{ name: "params", schema: { properties: {} } }] }],
+    components: { schemas: {} },
+  }))
   writeFileSync(join(dir, "hermes_constants.py"), "")
   writeFileSync(join(dir, "hermes_cli", "config_providers.py"), "")
   writeFileSync(join(dir, "hermes_cli", "config_defaults.py"), `DEFAULT_CONFIG = {

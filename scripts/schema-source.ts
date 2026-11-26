@@ -62,6 +62,12 @@ mod = ast.parse(src, filename=path)
 at = next(i for i, n in enumerate(mod.body) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "DEFAULT_CONFIG" for t in n.targets))
 start, end = mod.body[at].lineno - 1, mod.body[at].end_lineno - 1
 ns = {}
+# config_defaults.py imports sibling pure-data leaves (config_defaults_auxiliary, …). A bare package
+# stub resolves them without running hermes_cli/__init__.py or needing Hermes's Python deps.
+import os, types
+pkg = types.ModuleType("hermes_cli")
+pkg.__path__ = [os.path.dirname(path)]
+sys.modules.setdefault("hermes_cli", pkg)
 exec(compile(ast.Module(body=mod.body[:at + 1], type_ignores=[]), path, "exec"), ns)
 tree = ns["DEFAULT_CONFIG"]
 KEY = re.compile(r'^(\\s*)"([^"]+)"\\s*:\\s*(.*)$')

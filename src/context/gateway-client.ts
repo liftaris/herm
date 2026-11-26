@@ -7,6 +7,7 @@ import { canonical } from "./canonical"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
 import { prompt, type ServerRequest } from "./server-requests"
 import { encode } from "../utils/unicode"
+import { CANONICAL_SESSION_SCOPED, LEGACY_SESSION_SCOPED } from "../compat/hermes-params"
 
 const LOG_MAX = 200
 const LOG_PREVIEW = 240
@@ -33,6 +34,18 @@ type Pending = {
   method: string
   resolve: (v: unknown) => void
   reject: (e: Error) => void
+}
+
+const LEGACY_SCOPED = new Set<string>(LEGACY_SESSION_SCOPED)
+const CANONICAL_SCOPED = new Set<string>(CANONICAL_SESSION_SCOPED)
+
+// Hermes rejects undeclared params with 4000, so the active session_id rides only on methods whose
+// contract declares it. A canonical verb the authority does not serve falls back to the legacy
+// handler; canonical.prepare renames session.activate/session.close, which both carry the id.
+export function scoped(method: string, native: boolean): boolean {
+  if (!native) return LEGACY_SCOPED.has(method)
+  return CANONICAL_SCOPED.has(method) || LEGACY_SCOPED.has(method)
+    || method === "session.activate" || method === "session.close"
 }
 
 export function gatewayUrl(): string | null {
@@ -409,7 +422,7 @@ export class GatewayClient extends EventEmitter {
     if (generation !== this.generation) throw new Error("gateway restarted")
     const contract = this.native && method === "session.create" ? await this.describe() : null
     if (generation !== this.generation || this.stopped) throw new Error("gateway restarted")
-    const merged = this.sid && params.session_id === undefined && !["runtime.describe", "client.capabilities", "gateway.ping", "session.create"].includes(method)
+    const merged = this.sid && params.session_id === undefined && scoped(method, this.native)
       ? { session_id: this.sid, ...params } : params
     const frame = this.native ? canonical.prepare(method, merged, contract, this.subscriptions) : { method, params: merged }
     const rid = `r${++this.id}`
